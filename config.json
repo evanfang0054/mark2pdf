@@ -1,0 +1,17 @@
+{
+  "input": {
+    "path": "./public/md",
+    "extensions": [".md"]
+  },
+  "output": {
+    "path": "./dist/pdf",
+    "createDirIfNotExist": true,
+    "maintainDirStructure": true
+  },
+  "options": {
+    "concurrent": 3,
+    "timeout": 30000,
+    "format": "A4",
+    "orientation": "portrait"
+  }
+} 

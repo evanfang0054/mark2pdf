@@ -1,0 +1,33 @@
+{
+  "name": "mark2pdf",
+  "version": "1.0.0",
+  "description": "一款专业的Markdown文档转PDF工具，支持自定义样式和批量转换以及合并PDF文档",
+  "scripts": {
+    "merge": "node src/scripts/merge.js",
+    "start": "node src/scripts/convert.js"
+  },
+  "keywords": [
+    "markdown",
+    "pdf",
+    "converter",
+    "document",
+    "cli"
+  ],
+  "author": "arwenfang",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "markdown-pdf": "^11.0.0",
+    "ora": "^5.4.1",
+    "pdf-lib": "^1.17.1"
+  },
+  "engines": {
+    "node": ">=16.15.0"
+  },
+  "files": [
+    "src",
+    "assets",
+    "bin"
+  ]
+}

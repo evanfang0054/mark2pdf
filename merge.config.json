@@ -1,0 +1,22 @@
+{
+  "input": {
+    "path": "./dist/pdf",
+    "extensions": [".pdf"]
+  },
+  "output": {
+    "path": "./dist/mergePdf",
+    "createDirIfNotExist": true
+  },
+  "options": {
+    "sort": {
+      "enabled": true,
+      "method": "name",
+      "direction": "asc"
+    },
+    "compression": {
+      "enabled": true,
+      "quality": "medium"
+    },
+    "overwrite": true
+  }
+} 
