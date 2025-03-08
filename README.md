@@ -1,4 +1,4 @@
-# md-to-pdf
+# mark2pdf
 
 一个功能强大的 Markdown 转 PDF 工具，支持批量转换和 PDF 合并功能。基于 Node.js 构建，提供高度可配置的文档转换解决方案。
 
