@@ -26,8 +26,8 @@
 
 ```bash
 # 克隆项目
-git clone
-cd md-to-pdf
+git clone https://github.com/evanfang0054/mark2pdf.git
+cd mark2pdf
 
 # 安装依赖
 pnpm install
@@ -37,7 +37,7 @@ pnpm install
 
 ```bash
 # 转换 Markdown 为 PDF
-pnpm start
+pnpm run start
 
 # 合并 PDF 文件
 pnpm run merge
@@ -233,7 +233,3 @@ pnpm run merge
 - 使用 `logger.setLevel('debug')` 启用详细日志
 - 监控内存使用情况以优化大文件处理
 - 使用 Node.js 调试工具分析性能瓶颈
-
-## 📄 许可证
-
-ISC License
