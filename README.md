@@ -186,8 +186,6 @@ pnpm run merge
 - **开发工具**
   - Node.js
   - pnpm
-  - ESLint
-  - Jest (单元测试)
 
 ## 🔧 开发指南
 
