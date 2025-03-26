@@ -4,7 +4,8 @@
   "description": "一款专业的Markdown文档转PDF工具，支持自定义样式和批量转换以及合并PDF文档",
   "scripts": {
     "merge": "node src/scripts/merge.js",
-    "start": "node src/scripts/convert.js"
+    "start": "node src/scripts/convert.js",
+    "html2pdf": "node src/scripts/html2pdf.js"
   },
   "keywords": [
     "markdown",
@@ -20,7 +21,8 @@
     "commander": "^11.1.0",
     "markdown-pdf": "^11.0.0",
     "ora": "^5.4.1",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "puppeteer": "21.11.0"
   },
   "engines": {
     "node": ">=16.15.0"
