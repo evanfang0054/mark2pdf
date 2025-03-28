@@ -5,6 +5,7 @@
 ## ✨ 主要特性
 
 - 🚀 批量转换 Markdown 文件为 PDF
+- 🌐 支持 HTML 文件转换为 PDF
 - 📦 支持 PDF 文件合并
 - 🎯 灵活的配置选项
 - 📁 保持原始目录结构
@@ -39,6 +40,9 @@ pnpm install
 # 转换 Markdown 为 PDF
 pnpm run start
 
+# 转换 HTML 为 PDF
+pnpm run html2pdf
+
 # 合并 PDF 文件
 pnpm run merge
 ```
@@ -65,6 +69,40 @@ pnpm run merge
     "timeout": 30000,          // 处理超时时间（毫秒）
     "format": "A4",            // 页面格式
     "orientation": "portrait"   // 页面方向
+  }
+}
+```
+
+### HTML 转 PDF 配置
+
+在 `html2pdf.config.json` 中配置：
+
+```json
+{
+  "input": {
+    "path": "./public/html",    // HTML 文件目录
+    "extensions": [".html"]     // 支持的文件扩展名
+  },
+  "output": {
+    "path": "./dist/pdf",       // 输出目录
+    "createDirIfNotExist": true,  // 自动创建目录
+    "maintainDirStructure": true  // 保持目录结构
+  },
+  "options": {
+    "format": "A4",            // 页面格式 (A4, Letter 等)
+    "margin": {                // 页面边距
+      "top": "1cm",
+      "right": "1cm",
+      "bottom": "1cm",
+      "left": "1cm"
+    },
+    "printBackground": true,    // 是否打印背景
+    "scale": 1,                // 缩放比例
+    "landscape": false,         // 是否横向打印
+    "pageRanges": "",          // 页面范围 (例如: "1-5, 8")
+    "headerTemplate": "",      // 页眉模板
+    "footerTemplate": "",      // 页脚模板
+    "timeout": 30000           // 超时时间 (毫秒)
   }
 }
 ```
@@ -158,6 +196,7 @@ pnpm run merge
 
 - **配置管理**：处理配置文件加载和验证
 - **转换引擎**：负责 Markdown 到 PDF 的转换
+- **HTML转换引擎**：负责 HTML 到 PDF 的转换
 - **合并引擎**：处理多个 PDF 文件的合并
 - **服务层**：协调批量处理和资源管理
 - **工具类**：提供文件操作、日志记录等通用功能
@@ -179,6 +218,7 @@ pnpm run merge
 
 - **核心依赖**
   - `markdown-pdf`: Markdown 转 PDF 引擎
+  - `puppeteer`: HTML 转 PDF 引擎
   - `pdf-lib`: PDF 操作和合并
   - `commander`: 命令行参数解析
   - `chalk` & `ora`: 终端输出美化
@@ -195,13 +235,18 @@ pnpm run merge
 ├── assets/            # 静态资源
 │   └── pdf-style.css  # PDF 样式文件
 ├── config.json        # 转换配置
+├── html2pdf.config.json # HTML转PDF配置
 ├── merge.config.json  # 合并配置
 ├── public/            # 公共资源
-│   └── md/            # Markdown 文件目录
+│   ├── md/            # Markdown 文件目录
+│   └── html/          # HTML 文件目录
 ├── src/               # 源代码
 │   ├── config/        # 配置管理
 │   ├── core/          # 核心功能
 │   ├── scripts/       # 脚本入口
+│   │   ├── index.js   # Markdown转PDF入口
+│   │   ├── html2pdf.js # HTML转PDF入口
+│   │   └── merge.js   # PDF合并入口
 │   ├── services/      # 服务层
 │   └── utils/         # 工具函数
 └── dist/              # 输出目录
