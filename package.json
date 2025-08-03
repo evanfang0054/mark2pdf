@@ -1,6 +1,6 @@
 {
   "name": "mark2pdf",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "一款专业的Markdown文档转PDF工具，支持自定义样式和批量转换以及合并PDF文档",
   "scripts": {
     "build": "node build.js",
@@ -39,10 +39,29 @@
   "bin": {
     "mark2pdf": "dist/bin/mark2pdf.js"
   },
+  "main": "./dist/bin/mark2pdf.js",
+  "types": "./dist/types/src/bin/mark2pdf.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/src/bin/mark2pdf.d.ts",
+      "import": "./dist/bin/mark2pdf.js",
+      "require": "./dist/bin/mark2pdf.js"
+    }
+  },
   "files": [
     "dist",
-    "assets"
+    "assets",
+    "LICENSE",
+    "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/evanfang0054/mark2pdf.git"
+  },
+  "bugs": {
+    "url": "https://github.com/evanfang0054/mark2pdf/issues"
+  },
+  "homepage": "https://github.com/evanfang0054/mark2pdf#readme",
   "devDependencies": {
     "@types/cli-progress": "^3.11.6",
     "@types/inquirer": "^9.0.8",
