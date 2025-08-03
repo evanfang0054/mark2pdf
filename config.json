@@ -4,7 +4,7 @@
     "extensions": [".md"]
   },
   "output": {
-    "path": "./dist/pdf",
+    "path": "./public_dist/pdf",
     "createDirIfNotExist": true,
     "maintainDirStructure": true
   },

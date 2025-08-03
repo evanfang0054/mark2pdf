@@ -23,11 +23,11 @@ async function buildBundle() {
           assets: [
             {
               from: ['./assets/**/*'],
-              to: './dist/assets',
+              to: './assets',
             },
             {
               from: ['./src/**/*.js'],
-              to: './dist/src',
+              to: './src',
             },
           ],
         }),

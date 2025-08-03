@@ -1,6 +1,6 @@
 {
   "name": "mark2pdf",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "一款专业的Markdown文档转PDF工具，支持自定义样式和批量转换以及合并PDF文档",
   "scripts": {
     "build": "node build.js",
@@ -49,10 +49,7 @@
     }
   },
   "files": [
-    "dist",
-    "assets",
-    "LICENSE",
-    "README.md"
+    "dist"
   ],
   "repository": {
     "type": "git",

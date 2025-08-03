@@ -272,7 +272,7 @@ describe('ConfigLoader', () => {
       
       // 验证配置文件中的路径值
       expect(actualConfig.input.path).toBe('./public/md');
-      expect(actualConfig.output.path).toBe('./dist/pdf');
+      expect(actualConfig.output.path).toBe('./public_dist/pdf');
       
       // 验证路径在文件系统中是否可以解析
       const resolvedInputPath = path.resolve(actualConfig.input.path);

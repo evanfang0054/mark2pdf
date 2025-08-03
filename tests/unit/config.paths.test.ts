@@ -11,7 +11,7 @@ describe('配置文件路径验证', () => {
     
     // 验证配置文件中的路径值
     expect(actualConfig.input.path).toBe('./public/md');
-    expect(actualConfig.output.path).toBe('./dist/pdf');
+    expect(actualConfig.output.path).toBe('./public_dist/pdf');
     
     // 使用路径验证工具验证这些路径
     const isInputPathValid = await PathValidator.validateInputPath(actualConfig.input.path);
@@ -73,8 +73,8 @@ describe('配置文件路径验证', () => {
     expect(config.input.path).toMatch(/^\.[\/\\]public[\/\\]md$/);
     
     // 验证output.path
-    expect(config.output.path).toBe('./dist/pdf');
-    expect(config.output.path).toMatch(/^\.[\/\\]dist[\/\\]pdf$/);
+    expect(config.output.path).toBe('./public_dist/pdf');
+    expect(config.output.path).toMatch(/^\.[\/\\]public_dist[\/\\]pdf$/);
     
     // 验证扩展名配置
     expect(config.input.extensions).toEqual(['.md']);

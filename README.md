@@ -37,6 +37,9 @@ cd mark2pdf
 
 # 安装依赖
 pnpm install
+
+# 构建项目
+pnpm run build
 ```
 
 ### 基本使用
@@ -66,6 +69,9 @@ pnpm run build
 ```bash
 # 构建项目后，可以使用 mark2pdf 命令
 pnpm run build
+
+# 创建全局链接（可选）
+npm link
 
 # 然后可以直接使用 mark2pdf 命令
 mark2pdf --version
@@ -194,49 +200,84 @@ mark2pdf merge --overwrite true
 - **合并配置**: `merge.config.json` (PDF 合并)
 
 #### 3.2 配置文件示例
+
+##### Markdown 转 PDF 配置 (config.json)
 ```json
 {
   "input": {
-    "path": "./docs",
-    "extensions": [".md", ".markdown"],
-    "filters": {
-      "include": ["*.md", "!*draft*"],
-      "exclude": ["temp/**", "*.bak"]
-    }
+    "path": "./public/md",
+    "extensions": [".md"]
   },
   "output": {
-    "path": "./output",
+    "path": "./public_dist/pdf",
     "createDirIfNotExist": true,
-    "maintainDirStructure": true,
-    "renamePattern": "{name}_{date}.pdf"
+    "maintainDirStructure": true
   },
   "options": {
     "concurrent": 3,
     "timeout": 30000,
     "format": "A4",
-    "orientation": "portrait",
-    "theme": "default",
-    "toc": true,
-    "cssPath": "./assets/custom-style.css",
-    "watermark": {
-      "text": "Confidential",
-      "opacity": 0.1
+    "orientation": "portrait"
+  },
+  "features": {
+    "incremental": false
+  }
+}
+```
+
+##### HTML 转 PDF 配置 (html2pdf.config.json)
+```json
+{
+  "input": {
+    "path": "./public/html",
+    "extensions": [".html"]
+  },
+  "output": {
+    "path": "./public_dist/pdf",
+    "createDirIfNotExist": true,
+    "maintainDirStructure": true
+  },
+  "options": {
+    "format": "A4",
+    "margin": {
+      "top": "1cm",
+      "right": "1cm",
+      "bottom": "1cm",
+      "left": "1cm"
     },
-    "compression": {
-      "enabled": true,
-      "quality": "medium"
-    },
+    "printBackground": true,
+    "scale": 1,
+    "landscape": false,
+    "pageRanges": "",
+    "headerTemplate": "",
+    "footerTemplate": "",
+    "timeout": 30000
+  }
+}
+```
+
+##### PDF 合并配置 (merge.config.json)
+```json
+{
+  "input": {
+    "path": "./public_dist/pdf",
+    "extensions": [".pdf"]
+  },
+  "output": {
+    "path": "./public_dist/mergePdf",
+    "createDirIfNotExist": true
+  },
+  "options": {
     "sort": {
       "enabled": true,
       "method": "name",
       "direction": "asc"
     },
-    "overwrite": false
-  },
-  "features": {
-    "incremental": true,
-    "retry": 2,
-    "cache": true
+    "compression": {
+      "enabled": true,
+      "quality": "medium"
+    },
+    "overwrite": true
   }
 }
 ```
@@ -254,11 +295,11 @@ mark2pdf convert --concurrent 8
 
 #### 4.2 生成技术文档 PDF
 ```bash
-# 生成包含目录的技术文档
-mark2pdf convert --toc true --theme technical
+# 转换文档并指定格式
+mark2pdf convert --format A4 --orientation landscape
 
-# 添加水印
-mark2pdf convert --watermark-text "Internal Use Only"
+# 设置并发数和超时
+mark2pdf convert --concurrent 5 --timeout 60000
 ```
 
 #### 4.3 合并多个 PDF
@@ -272,13 +313,15 @@ mark2pdf merge --sort-enabled true --sort-method name
 
 ### 5. 高级功能
 
-#### 5.1 过器和通配符
+#### 5.1 过滤器和通配符
 ```json
 {
   "input": {
+    "path": "./docs",
+    "extensions": [".md"],
     "filters": {
-      "include": ["*.md", "!*draft*", "!*temp*"],
-      "exclude": ["archive/**", "backup/**"]
+      "include": [".*.md"],
+      "exclude": ["*draft*", "*temp*"]
     }
   }
 }
@@ -324,20 +367,20 @@ MARK2PDF_TIMEOUT=60000
 # 检查配置文件
 mark2pdf convert --verbose
 
-# 验证路径权限
-mark2pdf convert --check-permissions
+# 验证输入输出路径
+mark2pdf convert --input ./docs --output ./output
 
-# 清理缓存
-mark2pdf convert --no-cache
+# 检查文件权限
+ls -la ./docs ./output
 ```
 
 #### 6.2 调试模式
 ```bash
-# 启用详细日志
-mark2pdf convert --verbose --log-level debug
+# 启用详细输出
+mark2pdf convert --verbose
 
-# 检查路径验证
-mark2pdf convert --validate-paths
+# 检查配置加载
+mark2pdf convert --config ./config.json --verbose
 ```
 
 ### 7. 性能优化
@@ -348,10 +391,10 @@ mark2pdf convert --validate-paths
 mark2pdf convert --concurrent 4
 
 # 启用增量转换
-mark2pdf convert --incremental true
+mark2pdf convert --config ./config.json  # 在配置文件中设置 "incremental": true
 
-# 启用缓存
-mark2pdf convert --cache true
+# 启用重试机制
+mark2pdf convert --config ./config.json  # 在配置文件中设置 "features.retry": 2
 ```
 
 #### 7.2 内存优化
@@ -587,9 +630,8 @@ done
 ### 核心模块
 
 - **配置管理**：处理配置文件加载和验证
-- **转换引擎**：负责 Markdown 到 PDF 的转换
-- **HTML转换引擎**：负责 HTML 到 PDF 的转换
-- **合并引擎**：处理多个 PDF 文件的合并
+- **转换引擎**：负责 Markdown 到 PDF 的转换（使用 pdfkit）
+- **合并引擎**：处理多个 PDF 文件的合并（使用 pdf-lib）
 - **服务层**：协调批量处理和资源管理
 - **工具类**：提供文件操作、日志记录等通用功能
 
@@ -609,9 +651,9 @@ done
 ## 🧩 技术栈
 
 ### 核心依赖
-- `markdown-pdf`: Markdown 转 PDF 引擎
-- `puppeteer`: HTML 转 PDF 引擎
+- `pdfkit`: Markdown 转 PDF 引擎
 - `pdf-lib`: PDF 操作和合并
+- `marked`: Markdown 解析器
 - `commander`: 命令行参数解析
 - `chalk` & `ora`: 终端输出美化
 - `zod`: 数据验证和类型安全
@@ -621,7 +663,6 @@ done
 - **测试框架**: Vitest + Istanbul 覆盖率
 - **包管理**: pnpm
 - **运行时**: Node.js >= 16.15.0
-- **代码质量**: ESLint + Prettier
 - **路径别名**: 支持 `@/` 别名导入
 
 ### 开发依赖
@@ -642,9 +683,12 @@ done
 ├── config.json                # 转换配置
 ├── html2pdf.config.json       # HTML转PDF配置
 ├── merge.config.json          # 合并配置
-├── public/                    # 公共资源
-│   ├── md/                    # Markdown 文件目录
-│   └── html/                  # HTML 文件目录
+├── public/                    # 示例资源目录
+│   ├── md/                    # Markdown 文件示例目录
+│   └── html/                  # HTML 文件示例目录
+├── public_dist/               # 默认输出目录
+│   ├── pdf/                   # PDF 输出目录
+│   └── mergePdf/              # 合并PDF输出目录
 ├── src/                       # 源代码
 │   ├── bin/                   # CLI 工具
 │   │   └── mark2pdf.ts        # 主入口文件
@@ -711,12 +755,12 @@ done
    - 支持第三方插件扩展功能
 
 4. **字体支持扩展**
-   - 在 `_getChineseFontInfo()` 方法中添加新字体路径
+   - 在 `PdfConverter.ts` 的 `_getChineseFontInfo()` 方法中添加新字体路径
    - 支持更多字体格式和编码
    - 添加字体验证和兼容性检查
 
 5. **HTML 实体解码扩展**
-   - 在 `_decodeHtmlEntities()` 方法中添加新的实体类型
+   - 在 `PdfConverter.ts` 的 `_decodeHtmlEntities()` 方法中添加新的实体类型
    - 支持更多 Unicode 字符和符号
    - 优化解码性能和错误处理
 
