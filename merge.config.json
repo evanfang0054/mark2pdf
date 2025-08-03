@@ -1,10 +1,10 @@
 {
   "input": {
-    "path": "./dist/pdf",
+    "path": "./public_dist/pdf",
     "extensions": [".pdf"]
   },
   "output": {
-    "path": "./dist/mergePdf",
+    "path": "./public_dist/mergePdf",
     "createDirIfNotExist": true
   },
   "options": {

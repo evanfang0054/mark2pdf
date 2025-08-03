@@ -1,17 +1,18 @@
-const fs = require('fs').promises;
-const path = require('path');
+import fs from 'fs/promises';
+import path from 'path';
+import { Mark2pdfConfig } from '../config/schema';
 
 /**
  * 配置加载器
  * 负责加载和验证配置文件
  */
-class ConfigLoader {
+export class ConfigLoader {
   /**
    * 加载配置文件
    * @param {string} [type='default'] 配置类型
-   * @returns {Promise<Object>} 配置对象
+   * @returns {Promise<Mark2pdfConfig>} 配置对象
    */
-  static async loadConfig(type = 'default') {
+  static async loadConfig(type: string = 'default'): Promise<Mark2pdfConfig> {
     const configPath = path.join(
       process.cwd(),
       type === 'default' ? 'config.json' : 'merge.config.json'
@@ -23,17 +24,17 @@ class ConfigLoader {
       await ConfigLoader._validateConfig(config, type);
       return config;
     } catch (error) {
-      throw new Error(`加载配置文件失败: ${error.message}`);
+      throw new Error(`加载配置文件失败: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
    * 验证配置对象
    * @private
-   * @param {Object} config 配置对象
+   * @param {Mark2pdfConfig} config 配置对象
    * @param {string} type 配置类型
    */
-  static async _validateConfig(config, type) {
+  static async _validateConfig(config: Mark2pdfConfig, type: string): Promise<void> {
     if (!config.input || !config.output) {
       throw new Error('配置文件缺少必要的 input 或 output 字段');
     }
@@ -56,9 +57,9 @@ class ConfigLoader {
   /**
    * 验证默认配置
    * @private
-   * @param {Object} config 配置对象
+   * @param {Mark2pdfConfig} config 配置对象
    */
-  static _validateDefaultConfig(config) {
+  static _validateDefaultConfig(config: Mark2pdfConfig): void {
     const { options } = config;
     if (!options) {
       throw new Error('配置文件缺少 options 字段');
@@ -76,9 +77,9 @@ class ConfigLoader {
   /**
    * 验证合并配置
    * @private
-   * @param {Object} config 配置对象
+   * @param {Mark2pdfConfig} config 配置对象
    */
-  static _validateMergeConfig(config) {
+  static _validateMergeConfig(config: Mark2pdfConfig): void {
     const { options } = config;
     if (!options || !options.sort || !options.compression) {
       throw new Error('合并配置缺少必要的选项字段');
@@ -93,7 +94,3 @@ class ConfigLoader {
     }
   }
 }
-
-module.exports = {
-  loadConfig: ConfigLoader.loadConfig
-}; 

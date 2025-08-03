@@ -1,11 +1,21 @@
 {
   "name": "mark2pdf",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "一款专业的Markdown文档转PDF工具，支持自定义样式和批量转换以及合并PDF文档",
   "scripts": {
-    "merge": "node src/scripts/merge.js",
-    "start": "node src/scripts/convert.js",
-    "html2pdf": "node src/scripts/html2pdf.js"
+    "build": "node build.js",
+    "build:watch": "node build.js --watch",
+    "build:prod": "NODE_ENV=production node build.js",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "test:ui": "vitest --ui",
+    "merge": "tsx src/scripts/merge.ts",
+    "start": "tsx src/scripts/convert.ts",
+    "html2pdf": "tsx src/scripts/html2pdf.ts",
+    "clean": "rm -rf dist coverage",
+    "type-check": "tsc --noEmit",
+    "prebuild": "pnpm run clean"
   },
   "keywords": [
     "markdown",
@@ -14,22 +24,46 @@
     "document",
     "cli"
   ],
-  "author": "arwenfang",
+  "author": "evanfang",
   "license": "ISC",
   "dependencies": {
     "chalk": "^4.1.2",
-    "commander": "^11.1.0",
-    "markdown-pdf": "^11.0.0",
+    "marked": "^16.1.1",
     "ora": "^5.4.1",
     "pdf-lib": "^1.17.1",
-    "puppeteer": "21.11.0"
+    "pdfkit": "^0.17.1"
   },
   "engines": {
     "node": ">=16.15.0"
   },
+  "bin": {
+    "mark2pdf": "dist/bin/mark2pdf.js"
+  },
   "files": [
-    "src",
-    "assets",
-    "bin"
-  ]
+    "dist",
+    "assets"
+  ],
+  "devDependencies": {
+    "@types/cli-progress": "^3.11.6",
+    "@types/inquirer": "^9.0.8",
+    "@types/js-yaml": "^4.0.9",
+    "@types/markdown-pdf": "^9.0.5",
+    "@types/node": "^24.1.0",
+    "@types/pdfkit": "^0.17.2",
+    "@vitest/coverage-istanbul": "^3.2.4",
+    "cli-progress": "^3.12.0",
+    "commander": "^11.1.0",
+    "dotenv": "^17.2.1",
+    "esbuild": "^0.25.8",
+    "esbuild-node-externals": "^1.18.0",
+    "esbuild-plugin-copy": "^2.1.1",
+    "inquirer": "^12.9.0",
+    "js-yaml": "^4.1.0",
+    "toml": "^3.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.2",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.4",
+    "zod": "^4.0.14"
+  }
 }

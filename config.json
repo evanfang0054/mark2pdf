@@ -13,5 +13,8 @@
     "timeout": 30000,
     "format": "A4",
     "orientation": "portrait"
+  },
+  "features": {
+    "incremental": false
   }
 } 
