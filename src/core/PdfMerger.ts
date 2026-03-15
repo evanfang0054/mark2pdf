@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { statSync } from 'fs';
 import { PDFDocument } from 'pdf-lib';
 import { Mark2pdfConfig } from '../config/schema';
 
@@ -111,11 +112,39 @@ export class PdfMerger {
       case 'name':
         return a.localeCompare(b);
       case 'date':
-        return 0; // 简化实现，按名称排序
+        return this._compareByDate(a, b);
       case 'size':
-        return 0; // 简化实现，按名称排序
+        return this._compareBySize(a, b);
       default:
-        return 0;
+        return a.localeCompare(b);
+    }
+  }
+
+  /**
+   * 按修改时间比较
+   * @private
+   */
+  private _compareByDate(a: string, b: string): number {
+    try {
+      const statA = statSync(a);
+      const statB = statSync(b);
+      return statA.mtimeMs - statB.mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * 按文件大小比较
+   * @private
+   */
+  private _compareBySize(a: string, b: string): number {
+    try {
+      const statA = statSync(a);
+      const statB = statSync(b);
+      return statA.size - statB.size;
+    } catch {
+      return 0;
     }
   }
 
