@@ -32,14 +32,56 @@ export class PdfConverter {
   }
 
   /**
-   * 转换单个 Markdown 文件为 PDF
+   * 转换单个 Markdown 文件为 PDF（带重试）
    * @param mdFile Markdown 文件路径
    * @returns Promise<ConversionResult> 转换结果
    */
   async convert(mdFile: string): Promise<ConversionResult> {
+    const retries = this.config.features?.retry ?? 0;
     const outputPath = getOutputPath(mdFile, this.config);
     const startTime = Date.now();
-    
+
+    // 无重试配置，直接转换
+    if (retries <= 0) {
+      return this._convertOnce(mdFile, outputPath, startTime);
+    }
+
+    // 带重试的转换
+    let lastError: string = '';
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        const result = await this._convertOnce(mdFile, outputPath, startTime);
+        if (result.success) {
+          return result;
+        }
+        lastError = result.error || '未知错误';
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+
+      // 失败后重试（最后一次不提示）
+      if (attempt <= retries) {
+        if (this.progress) {
+          this.progress.info(`⚠ ${path.basename(mdFile)} 第${attempt}次失败，重试中...`);
+        }
+        await this._delay(500 * attempt); // 递增延迟
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    return {
+      success: false,
+      file: mdFile,
+      error: `${lastError} (重试${retries}次后仍失败)`,
+      duration
+    };
+  }
+
+  /**
+   * 执行单次转换
+   * @private
+   */
+  private async _convertOnce(mdFile: string, outputPath: string, startTime: number): Promise<ConversionResult> {
     try {
       if (this.progress) {
         this.progress.info(`开始转换: ${path.basename(mdFile)}`);
@@ -47,13 +89,13 @@ export class PdfConverter {
 
       await this._validateAndPrepare(mdFile, outputPath);
       await this._performConversion(mdFile, outputPath);
-      
+
       const duration = Date.now() - startTime;
-      
+
       if (this.progress) {
         this.progress.info(`✓ ${path.basename(mdFile)} (${duration}ms)`);
       }
-      
+
       return {
         success: true,
         file: mdFile,
@@ -63,11 +105,11 @@ export class PdfConverter {
     } catch (error) {
       const duration = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       if (this.progress) {
         this.progress.error(`转换失败 ${path.basename(mdFile)}: ${errorMessage}`);
       }
-      
+
       return {
         success: false,
         file: mdFile,
@@ -75,6 +117,14 @@ export class PdfConverter {
         duration
       };
     }
+  }
+
+  /**
+   * 延迟函数
+   * @private
+   */
+  private _delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
