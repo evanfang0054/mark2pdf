@@ -28,6 +28,10 @@
   "license": "ISC",
   "dependencies": {
     "chalk": "^4.1.2",
+    "css-select": "^6.0.0",
+    "dom-serializer": "^2.0.0",
+    "html-pdf-node": "^1.0.8",
+    "htmlparser2": "^10.1.0",
     "marked": "^16.1.1",
     "ora": "^5.4.1",
     "pdf-lib": "^1.17.1",

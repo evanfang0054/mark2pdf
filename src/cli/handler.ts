@@ -7,6 +7,7 @@ import { ConfigLoader } from '../config/loader';
 import { ProgressIndicator } from '../utils/progress';
 import { ConverterService } from '../services/converter';
 import { MergerService } from '../services/merger';
+import { HtmlConverterService } from '../services/htmlConverter';
 
 export class CLIHandler {
   static async handleCommand(command: string, options: any) {
@@ -206,11 +207,13 @@ export class CLIHandler {
   }
 
   private static async _handleHtml(
-    _config: Mark2pdfConfig,
-    _progress: ProgressIndicator
+    config: Mark2pdfConfig,
+    progress: ProgressIndicator
   ) {
-    // TODO: 实现 HTML 转换逻辑
-    console.log(chalk.yellow('HTML 转换功能正在开发中...'));
+    const htmlConverter = new HtmlConverterService(progress, {
+      format: config.options?.format as 'A4' | 'A3' | 'A5' | 'Letter' || 'A4'
+    });
+    await htmlConverter.convertAll(config.input.path, config.output.path);
   }
 
   private static async _handleMerge(
