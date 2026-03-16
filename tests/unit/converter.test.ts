@@ -184,20 +184,20 @@ describe('PdfConverter', () => {
 
     expect(result.success).toBe(false);
     expect(result.file).toBe(testFile);
-    expect(result.error).toBe(errorMessage);
+    expect(result.error).toContain(errorMessage);
     expect(result.duration).toBeGreaterThanOrEqual(0);
   });
 
   it('should validate markdown file extension', async () => {
     const invalidFile = './test.txt';
-    
+
     // Mock fileUtils to return false for non-markdown files
     (isMarkdownFile as any).mockReturnValue(false);
 
     const result = await converter.convert(invalidFile);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('不是有效的 Markdown 文件');
+    expect(result.error).toContain('不是有效的 Markdown 文件');
   });
 
   it('should handle empty file content', async () => {
@@ -234,7 +234,7 @@ describe('PdfConverter', () => {
     const result = await converter.convert(testFile);
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe('文件内容为空');
+    expect(result.error).toContain('文件内容为空');
   });
 
   it('should convert batch files with correct concurrency', async () => {

@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
+// 支持的输入格式
+const inputExtensionsSchema = z.array(z.string()).default(['.md']);
+
 const inputSchema = z.object({
   path: z.string().default('./public/md'),
-  extensions: z.array(z.string()).default(['.md']),
+  extensions: inputExtensionsSchema,
   filters: z
     .object({
       include: z.array(z.string()).optional(),
@@ -11,11 +14,16 @@ const inputSchema = z.object({
     .optional(),
 });
 
+// 支持的输出格式
+export const outputFormatSchema = z.enum(['pdf', 'txt', 'md', 'json']).default('pdf');
+export type OutputFormat = z.infer<typeof outputFormatSchema>;
+
 const outputSchema = z.object({
   path: z.string().default('./dist/pdf'),
   createDirIfNotExist: z.boolean().default(true),
   maintainDirStructure: z.boolean().default(true),
   renamePattern: z.string().optional(),
+  format: outputFormatSchema.optional(), // 输出格式
 });
 
 const optionsSchema = z.object({

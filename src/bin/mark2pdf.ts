@@ -50,6 +50,17 @@ program
   });
 
 program
+  .command('extract')
+  .description('从 PDF/Word 文档提取文本')
+  .option('-i, --input <path>', '输入文件或目录', './input')
+  .option('-o, --output <path>', '输出目录', './output')
+  .option('-f, --format <format>', '输出格式 (txt|md|json)', 'txt')
+  .option('--verbose', '详细输出')
+  .action(async (options) => {
+    await CLIHandler.handleCommand('extract', options);
+  });
+
+program
   .command('init')
   .description('初始化配置文件')
   .option('-g, --global', '创建全局配置')
