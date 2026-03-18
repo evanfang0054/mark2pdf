@@ -3,19 +3,70 @@ import fs from 'fs/promises';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { Mark2pdfConfig, OutputFormat } from '../config/schema';
-import { ConfigLoader } from '../config/loader';
+import { ConfigLoader, ConfigSource } from '../config/loader';
 import { ProgressIndicator } from '../utils/progress';
 import { ConverterService } from '../services/converter';
 import { MergerService } from '../services/merger';
 import { HtmlConverterService } from '../services/htmlConverter';
 import { PdfExtractor } from '../core/PdfExtractor';
 import { DocxConverter } from '../core/DocxConverter';
-import { detectInputType } from '../utils/inputDetector';
+import { detectInputType, InputType } from '../utils/inputDetector';
+import { getAllFiles } from '../utils/fileUtils';
+
+interface DeprecationEntry {
+  legacy: string;
+  replacement: string;
+  note?: string;
+}
+
+interface UnifiedCLIOptions {
+  input?: string;
+  output?: string;
+  config?: string;
+  theme?: string;
+  concurrent?: number;
+  timeout?: number;
+  pageSize?: 'A4' | 'Letter' | 'A3' | 'A5';
+  outputFormat?: OutputFormat;
+  dryRun?: boolean;
+  showConfig?: boolean;
+  reportJson?: string;
+  verbose?: boolean;
+}
+
+interface ConvertPlanItem {
+  inputPath: string;
+  type: InputType;
+  action: 'convert-md' | 'convert-html' | 'extract-docx' | 'extract-pdf' | 'skip';
+  targetPath?: string;
+  reason?: string;
+}
+
+interface ConvertExecutionPlan {
+  inputRoot: string;
+  outputRoot: string;
+  items: ConvertPlanItem[];
+}
+
+interface ActionableError {
+  category: 'path' | 'permission' | 'argument' | 'runtime';
+  summary: string;
+  action: string;
+}
+
+interface StructuredExecutionReport {
+  command: string;
+  total: number;
+  success: number;
+  failed: number;
+  durationMs: number;
+  failedDetails: Array<{ file: string; error: string }>;
+}
 
 /**
  * 递归获取目录下所有指定扩展名的文件
  */
-async function getAllFiles(dir: string, ext: string): Promise<string[]> {
+async function getAllFilesByExt(dir: string, ext: string): Promise<string[]> {
   const files: string[] = [];
 
   async function scan(currentDir: string): Promise<void> {
@@ -43,105 +94,149 @@ async function getAllFiles(dir: string, ext: string): Promise<string[]> {
 
 export class CLIHandler {
   static async handleCommand(command: string, options: any) {
+    const startedAt = Date.now();
+
     try {
-      // 转换命令行选项为配置格式
-      const commandConfig = this._transformOptionsToConfig(options);
+      const { unifiedOptions, deprecations } = this._normalizeCliOptions(options || {});
+      this._printDeprecations(deprecations);
 
-      // 加载配置
-      const config = await ConfigLoader.loadConfig(commandConfig);
+      const commandConfig = this._transformOptionsToConfig(unifiedOptions);
+      const loaded = await ConfigLoader.loadConfigWithTrace(commandConfig);
+      const config = loaded.effectiveConfig;
 
-      // 检查是否首次运行（无配置文件）
+      const progress = new ProgressIndicator({ verbose: unifiedOptions.verbose || false });
+
+      if (unifiedOptions.showConfig) {
+        this._printEffectiveConfig(config, loaded.sources);
+      }
+
       if (command === 'convert' && await this._isFirstRun()) {
         await this._runSetupWizard();
         return;
       }
 
-      // 创建进度显示
-      const progress = new ProgressIndicator({ verbose: options.verbose || false });
+      let report: StructuredExecutionReport | undefined;
 
-      // 执行对应命令
       switch (command) {
         case 'convert':
-          await this._handleConvert(config, progress);
+          report = await this._handleConvertUnified(config, progress, unifiedOptions);
           break;
-        case 'html':
-          await this._handleHtml(config, progress);
+        case 'html': {
+          const summary = await this._handleHtml(config, progress);
+          report = this._buildReport('html', summary.total, summary.success, summary.failed, summary.duration, summary.failedFiles);
           break;
-        case 'merge':
-          await this._handleMerge(config, progress);
+        }
+        case 'merge': {
+          const summary = await this._handleMerge(config, progress);
+          report = this._buildReport(
+            'merge',
+            summary.total,
+            summary.success,
+            summary.failed,
+            summary.duration,
+            summary.failedOperations.map((item) => ({ file: item.path, error: item.error }))
+          );
           break;
-        case 'extract':
-          await this._handleExtract(config, progress, options);
+        }
+        case 'extract': {
+          report = await this._handleExtract(config, progress, unifiedOptions);
           break;
+        }
         case 'init':
-          await this._handleInit(options);
+          await this._handleInit(unifiedOptions);
           break;
       }
 
-      progress.complete();
+      if (report) {
+        this._printExecutionSummary(report);
+      }
+
+      if (report && unifiedOptions.reportJson) {
+        await this._writeStructuredReport(unifiedOptions.reportJson, report);
+      }
+
+      if (command !== 'init') {
+        progress.complete();
+      }
     } catch (error) {
-      console.error(chalk.red('错误:'), error instanceof Error ? error.message : String(error));
+      const actionable = this._toActionableError(error);
+      this._printActionableError(actionable);
       process.exit(1);
+    } finally {
+      void startedAt;
     }
   }
 
-  private static _transformOptionsToConfig(options: any): Partial<Mark2pdfConfig> {
+  private static _normalizeCliOptions(options: Record<string, any>): {
+    unifiedOptions: UnifiedCLIOptions;
+    deprecations: DeprecationEntry[];
+  } {
+    const unified: UnifiedCLIOptions = {
+      input: options.input,
+      output: options.output,
+      config: options.config,
+      theme: options.theme,
+      concurrent: options.concurrent,
+      timeout: options.timeout,
+      pageSize: options.pageSize,
+      outputFormat: options.outFormat,
+      dryRun: Boolean(options.dryRun),
+      showConfig: Boolean(options.showConfig),
+      reportJson: options.reportJson,
+      verbose: Boolean(options.verbose),
+    };
+
+    const deprecations: DeprecationEntry[] = [];
+
+    if (options.format && !unified.pageSize) {
+      unified.pageSize = options.format;
+      deprecations.push({ legacy: '--format', replacement: '--page-size' });
+    }
+
+    return { unifiedOptions: unified, deprecations };
+  }
+
+  private static _printDeprecations(items: DeprecationEntry[]): void {
+    for (const item of items) {
+      console.warn(
+        chalk.yellow(
+          `⚠ 参数 ${item.legacy} 已弃用，请改用 ${item.replacement}${item.note ? `（${item.note}）` : ''}`
+        )
+      );
+    }
+  }
+
+  private static _transformOptionsToConfig(options: UnifiedCLIOptions): Partial<Mark2pdfConfig> {
     const config: Partial<Mark2pdfConfig> = {};
 
     if (options.input) {
       config.input = { path: options.input, extensions: ['.md'] };
     }
-    
+
     if (options.output) {
       config.output = { path: options.output, createDirIfNotExist: true, maintainDirStructure: true };
     }
 
-    if (options.concurrent) {
-      config.options = { 
-        concurrent: parseInt(options.concurrent),
-        timeout: 30000,
-        format: 'A4',
-        orientation: 'portrait',
-        toc: false,
-        overwrite: false
-      };
-    }
-
-    if (options.timeout) {
-      config.options = { 
-        ...config.options, 
-        timeout: parseInt(options.timeout),
-        concurrent: config.options?.concurrent || 3,
-        format: config.options?.format || 'A4',
-        orientation: config.options?.orientation || 'portrait',
-        toc: config.options?.toc || false,
-        overwrite: config.options?.overwrite || false
-      };
-    }
-
-    if (options.format) {
-      config.options = { 
-        ...config.options, 
-        format: options.format,
-        concurrent: config.options?.concurrent || 3,
-        timeout: config.options?.timeout || 30000,
-        orientation: config.options?.orientation || 'portrait',
-        toc: config.options?.toc || false,
-        overwrite: config.options?.overwrite || false
-      };
-    }
+    const nextOptions: NonNullable<Partial<Mark2pdfConfig>['options']> = {
+      concurrent: options.concurrent ?? 3,
+      timeout: options.timeout ?? 30000,
+      format: options.pageSize ?? 'A4',
+      orientation: 'portrait',
+      toc: false,
+      overwrite: false,
+    };
 
     if (options.theme) {
-      config.options = { 
-        ...config.options, 
-        theme: options.theme,
-        concurrent: config.options?.concurrent || 3,
-        timeout: config.options?.timeout || 30000,
-        format: config.options?.format || 'A4',
-        orientation: config.options?.orientation || 'portrait',
-        toc: config.options?.toc || false,
-        overwrite: config.options?.overwrite || false
-      };
+      nextOptions.theme = options.theme;
+    }
+
+    if (
+      options.concurrent !== undefined ||
+      options.timeout !== undefined ||
+      options.pageSize !== undefined ||
+      options.theme !== undefined
+    ) {
+      config.options = nextOptions;
     }
 
     return config;
@@ -217,7 +312,6 @@ export class CLIHandler {
       },
     ] as any);
 
-    // 生成配置文件
     const config: Mark2pdfConfig = {
       input: {
         path: answers.inputPath,
@@ -258,12 +352,271 @@ export class CLIHandler {
     console.log(chalk.green('✓ 配置已保存到 ~/.mark2pdf/config.json'));
   }
 
-  private static async _handleConvert(
+  private static async _handleConvertUnified(
     config: Mark2pdfConfig,
-    progress: ProgressIndicator
-  ) {
-    const converter = new ConverterService(config, progress);
-    await converter.convertAll();
+    progress: ProgressIndicator,
+    options: UnifiedCLIOptions
+  ): Promise<StructuredExecutionReport> {
+    const plan = await this._buildConvertExecutionPlan(config, options);
+
+    if (options.dryRun) {
+      this._printDryRunPlan(plan);
+      return this._buildReport('convert', plan.items.length, 0, 0, 0, []);
+    }
+
+    const startedAt = Date.now();
+    const failedDetails: Array<{ file: string; error: string }> = [];
+    let success = 0;
+    let failed = 0;
+
+    const groups = {
+      md: plan.items.filter((item) => item.action === 'convert-md').map((item) => item.inputPath),
+      html: plan.items.filter((item) => item.action === 'convert-html').map((item) => item.inputPath),
+      docx: plan.items.filter((item) => item.action === 'extract-docx').map((item) => item.inputPath),
+      pdf: plan.items.filter((item) => item.action === 'extract-pdf').map((item) => item.inputPath),
+    };
+
+    if (groups.md.length > 0) {
+      const converter = new ConverterService(
+        {
+          ...config,
+          input: { ...config.input, path: options.input || config.input.path, extensions: ['.md'] },
+          output: { ...config.output, path: options.output || config.output.path },
+        },
+        progress
+      );
+      const summary = await converter.convertAll();
+      success += summary.success;
+      failed += summary.failed;
+      failedDetails.push(...summary.failedFiles);
+    }
+
+    if (groups.html.length > 0) {
+      const htmlConverter = new HtmlConverterService(progress, {
+        format: config.options?.format as 'A4' | 'A3' | 'A5' | 'Letter' || 'A4',
+      });
+      const summary = await htmlConverter.convertAll(config.input.path, config.output.path);
+      success += summary.success;
+      failed += summary.failed;
+      failedDetails.push(...summary.failedFiles);
+    }
+
+    if (groups.docx.length > 0 || groups.pdf.length > 0) {
+      const extractionReport = await this._runExtractionByPlan(plan, config, options);
+      success += extractionReport.success;
+      failed += extractionReport.failed;
+      failedDetails.push(...extractionReport.failedDetails);
+    }
+
+    const skipped = plan.items.filter((item) => item.action === 'skip').length;
+    const total = success + failed + skipped;
+
+    return this._buildReport(
+      'convert',
+      total,
+      success,
+      failed,
+      Date.now() - startedAt,
+      failedDetails
+    );
+  }
+
+  private static async _runExtractionByPlan(
+    plan: ConvertExecutionPlan,
+    config: Mark2pdfConfig,
+    options: UnifiedCLIOptions
+  ): Promise<StructuredExecutionReport> {
+    const outputPath = options.output || config.output.path || './output';
+    const outputFormat = options.outputFormat || 'txt';
+
+    const extractor = new PdfExtractor({ format: outputFormat, outputDir: outputPath });
+    const docxConverter = new DocxConverter({ format: outputFormat, outputDir: outputPath });
+
+    let success = 0;
+    let failed = 0;
+    const failedDetails: Array<{ file: string; error: string }> = [];
+    const startedAt = Date.now();
+
+    for (const item of plan.items) {
+      if (item.action === 'extract-pdf') {
+        const result = await extractor.extract(item.inputPath, outputPath);
+        if (result.success) {
+          success++;
+        } else {
+          failed++;
+          failedDetails.push({ file: item.inputPath, error: result.error || '未知错误' });
+        }
+      }
+
+      if (item.action === 'extract-docx') {
+        const result = await docxConverter.convert(item.inputPath, outputPath);
+        if (result.success) {
+          success++;
+        } else {
+          failed++;
+          failedDetails.push({ file: item.inputPath, error: result.error || '未知错误' });
+        }
+      }
+    }
+
+    return this._buildReport(
+      'extract',
+      plan.items.filter((item) => item.action === 'extract-docx' || item.action === 'extract-pdf').length,
+      success,
+      failed,
+      Date.now() - startedAt,
+      failedDetails
+    );
+  }
+
+  private static async _buildConvertExecutionPlan(
+    config: Mark2pdfConfig,
+    options: UnifiedCLIOptions
+  ): Promise<ConvertExecutionPlan> {
+    const inputRoot = options.input || config.input.path;
+    const outputRoot = options.output || config.output.path;
+
+    const stat = await fs.stat(inputRoot).catch(() => null);
+    const candidates: string[] = [];
+
+    if (stat?.isFile()) {
+      candidates.push(inputRoot);
+    } else {
+      const extensionSet = ['.md', '.markdown', '.html', '.htm', '.docx', '.pdf'];
+      for (const ext of extensionSet) {
+        const files = await getAllFiles(inputRoot, ext) as string[];
+        candidates.push(...files);
+      }
+    }
+
+    const uniqCandidates = Array.from(new Set(candidates));
+
+    const items = uniqCandidates.map((filePath) => {
+      const type = detectInputType(filePath);
+      const relativePath = stat?.isFile() ? path.basename(filePath) : path.relative(inputRoot, filePath);
+      const baseName = relativePath.replace(/\.[^.]+$/, '');
+
+      if (type === 'md') {
+        return {
+          inputPath: filePath,
+          type,
+          action: 'convert-md' as const,
+          targetPath: path.join(outputRoot, `${baseName}.pdf`),
+        };
+      }
+
+      if (type === 'html') {
+        return {
+          inputPath: filePath,
+          type,
+          action: 'convert-html' as const,
+          targetPath: path.join(outputRoot, `${baseName}.pdf`),
+        };
+      }
+
+      if (type === 'docx') {
+        const ext = options.outputFormat || 'txt';
+        return {
+          inputPath: filePath,
+          type,
+          action: 'extract-docx' as const,
+          targetPath: path.join(outputRoot, `${baseName}.${ext}`),
+        };
+      }
+
+      if (type === 'pdf') {
+        const ext = options.outputFormat || 'txt';
+        return {
+          inputPath: filePath,
+          type,
+          action: 'extract-pdf' as const,
+          targetPath: path.join(outputRoot, `${baseName}.${ext}`),
+        };
+      }
+
+      return {
+        inputPath: filePath,
+        type,
+        action: 'skip' as const,
+        reason: '不支持的输入类型',
+      };
+    });
+
+    if (items.length === 0) {
+      items.push({
+        inputPath: inputRoot,
+        type: 'unknown',
+        action: 'skip',
+        reason: '未发现可处理文件',
+      });
+    }
+
+    return {
+      inputRoot,
+      outputRoot,
+      items,
+    };
+  }
+
+  private static _printDryRunPlan(plan: ConvertExecutionPlan): void {
+    console.log(chalk.cyan('\n🧪 Dry-run 执行计划（无副作用）'));
+    console.log(chalk.gray('='.repeat(60)));
+    console.log(`输入: ${plan.inputRoot}`);
+    console.log(`输出: ${plan.outputRoot}`);
+
+    for (const item of plan.items) {
+      if (item.action === 'skip') {
+        console.log(`- [SKIP] ${item.inputPath} (${item.reason || '未知原因'})`);
+      } else {
+        console.log(`- [${item.action}] ${item.inputPath} -> ${item.targetPath}`);
+      }
+    }
+
+    console.log(chalk.gray('='.repeat(60)));
+    console.log(chalk.green('Dry-run 完成：未创建任何文件，未执行实际转换。'));
+  }
+
+  private static _printEffectiveConfig(config: Mark2pdfConfig, sources: Record<string, ConfigSource>): void {
+    const lines: string[] = [];
+    this._flattenConfig(config, '', lines, sources);
+
+    console.log(chalk.cyan('\n🧭 生效配置（含来源）'));
+    console.log(chalk.gray('='.repeat(60)));
+    lines.forEach((line) => console.log(line));
+    console.log(chalk.gray('='.repeat(60)));
+  }
+
+  private static _flattenConfig(
+    value: unknown,
+    prefix: string,
+    lines: string[],
+    sources: Record<string, ConfigSource>
+  ): void {
+    if (Array.isArray(value)) {
+      const source = sources[prefix] || 'default';
+      lines.push(`${prefix}: ${JSON.stringify(value)}  ${chalk.gray(`[${source}]`)}`);
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        this._flattenConfig(child, path, lines, sources);
+      }
+      return;
+    }
+
+    if (prefix) {
+      const source = sources[prefix] || 'default';
+      const maskedValue = this._isSensitivePath(prefix) ? '***' : String(value);
+      lines.push(`${prefix}: ${maskedValue}  ${chalk.gray(`[${source}]`)}`);
+    }
+  }
+
+  private static _isSensitivePath(pathKey: string): boolean {
+    return ['token', 'password', 'secret', 'key'].some((fragment) =>
+      pathKey.toLowerCase().includes(fragment)
+    );
   }
 
   private static async _handleHtml(
@@ -273,7 +626,7 @@ export class CLIHandler {
     const htmlConverter = new HtmlConverterService(progress, {
       format: config.options?.format as 'A4' | 'A3' | 'A5' | 'Letter' || 'A4'
     });
-    await htmlConverter.convertAll(config.input.path, config.output.path);
+    return htmlConverter.convertAll(config.input.path, config.output.path);
   }
 
   private static async _handleMerge(
@@ -281,48 +634,65 @@ export class CLIHandler {
     progress: ProgressIndicator
   ) {
     const merger = new MergerService(config, progress);
-    await merger.mergeAll();
+    return merger.mergeAll();
   }
 
   private static async _handleExtract(
     config: Mark2pdfConfig,
     progress: ProgressIndicator,
-    options: any
-  ) {
+    options: UnifiedCLIOptions
+  ): Promise<StructuredExecutionReport> {
     const inputPath = options.input || config.input?.path || './input';
     const outputPath = options.output || config.output?.path || './output';
-    const format = (options.format || 'txt') as OutputFormat;
+    const format = (options.outputFormat || 'txt') as OutputFormat;
+    const startedAt = Date.now();
 
     progress.info(`正在从 ${inputPath} 提取文本...`);
 
-    // 检查是文件还是目录
     const stat = await fs.stat(inputPath).catch(() => null);
 
     let files: string[] = [];
 
     if (stat?.isFile()) {
-      // 单文件
       files = [inputPath];
     } else {
-      // 目录，扫描所有支持的文件
       const extensions = ['.pdf', '.docx'];
       for (const ext of extensions) {
-        const found = await getAllFiles(inputPath, ext);
+        const found = await getAllFilesByExt(inputPath, ext);
         files = files.concat(found);
       }
     }
 
     if (files.length === 0) {
       progress.warn('未找到任何可提取的文件');
-      return;
+      return this._buildReport('extract', 0, 0, 0, 0, []);
     }
 
     progress.info(`找到 ${files.length} 个文件待处理`);
 
-    // 确保输出目录存在
+    if (options.dryRun) {
+      const plan: ConvertExecutionPlan = {
+        inputRoot: inputPath,
+        outputRoot: outputPath,
+        items: files.map((file) => {
+          const type = detectInputType(file);
+          const ext = format;
+          return {
+            inputPath: file,
+            type,
+            action: type === 'pdf' ? 'extract-pdf' : type === 'docx' ? 'extract-docx' : 'skip',
+            targetPath: path.join(outputPath, `${path.basename(file, path.extname(file))}.${ext}`),
+            reason: type === 'pdf' || type === 'docx' ? undefined : '不支持的输入类型',
+          };
+        }),
+      };
+      this._printDryRunPlan(plan);
+      return this._buildReport('extract', files.length, 0, 0, 0, []);
+    }
+
     await fs.mkdir(outputPath, { recursive: true });
 
-    const results = [];
+    const results: Array<{ success: boolean; file: string; error?: string }> = [];
 
     for (const file of files) {
       const fileType = detectInputType(file);
@@ -330,7 +700,7 @@ export class CLIHandler {
       if (fileType === 'pdf') {
         const extractor = new PdfExtractor({ format, outputDir: outputPath });
         const result = await extractor.extract(file);
-        results.push(result);
+        results.push({ success: result.success, file, error: result.error });
 
         if (result.success) {
           progress.info(`✓ ${path.basename(file)} → ${result.output}`);
@@ -340,7 +710,7 @@ export class CLIHandler {
       } else if (fileType === 'docx') {
         const converter = new DocxConverter({ format, outputDir: outputPath });
         const result = await converter.convert(file);
-        results.push(result);
+        results.push({ success: result.success, file, error: result.error });
 
         if (result.success) {
           progress.info(`✓ ${path.basename(file)} → ${result.output}`);
@@ -348,33 +718,118 @@ export class CLIHandler {
           progress.error(`✗ ${path.basename(file)}: ${result.error}`);
         }
       } else {
-        progress.warn(`跳过不支持的文件类型: ${file}`);
+        const reason = `跳过不支持的文件类型: ${file}`;
+        progress.warn(reason);
+        results.push({ success: false, file, error: reason });
       }
     }
 
-    // 打印摘要
-    const successCount = results.filter(r => r.success).length;
-    const failCount = results.filter(r => !r.success).length;
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
 
+    return this._buildReport(
+      'extract',
+      files.length,
+      successCount,
+      failCount,
+      Date.now() - startedAt,
+      results.filter((r) => !r.success).map((r) => ({ file: r.file, error: r.error || '未知错误' }))
+    );
+  }
+
+  private static async _handleInit(options: UnifiedCLIOptions) {
+    void options;
+
+    await this._runSetupWizard();
+  }
+
+  private static async _writeStructuredReport(reportPath: string, report: StructuredExecutionReport): Promise<void> {
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf-8');
+    console.log(chalk.green(`✅ 结构化报告已输出: ${reportPath}`));
+  }
+
+  private static _buildReport(
+    command: string,
+    total: number,
+    success: number,
+    failed: number,
+    durationMs: number,
+    failedDetails: Array<{ file: string; error: string }>
+  ): StructuredExecutionReport {
+    return {
+      command,
+      total,
+      success,
+      failed,
+      durationMs,
+      failedDetails,
+    };
+  }
+
+  private static _printExecutionSummary(report: StructuredExecutionReport): void {
     console.log('');
     console.log(chalk.gray('═'.repeat(50)));
-    console.log(chalk.bold.cyan('📋 提取报告'));
+    console.log(chalk.bold.cyan(`📋 执行摘要 (${report.command})`));
     console.log(chalk.gray('═'.repeat(50)));
-    console.log(`  总计: ${chalk.white(files.length.toString())} 个文件`);
-    console.log(`  成功: ${chalk.green(successCount.toString())} 个`);
-    console.log(`  失败: ${failCount > 0 ? chalk.red(failCount.toString()) : chalk.gray('0')} 个`);
+    console.log(`  总计: ${chalk.white(report.total.toString())} 项`);
+    console.log(`  成功: ${chalk.green(report.success.toString())} 项`);
+    console.log(`  失败: ${report.failed > 0 ? chalk.red(report.failed.toString()) : chalk.gray('0')} 项`);
+    console.log(`  耗时: ${chalk.white(`${report.durationMs}ms`)}`);
+
+    if (report.failedDetails.length > 0) {
+      console.log(chalk.yellow('  失败明细:'));
+      for (const item of report.failedDetails.slice(0, 5)) {
+        console.log(chalk.yellow(`    - ${item.file}: ${item.error}`));
+      }
+      if (report.failedDetails.length > 5) {
+        console.log(chalk.yellow(`    ... 其余 ${report.failedDetails.length - 5} 项请查看 JSON 报告`));
+      }
+    }
+
     console.log(chalk.gray('═'.repeat(50)));
   }
 
-  private static async _handleInit(options: any) {
-    void options; // 忽略未使用的参数
-    const configPath = options.global 
-      ? path.join(process.env.HOME || process.env.USERPROFILE || '', '.mark2pdf', 'config.json')
-      : './mark2pdf.config.json';
-    
-    void configPath; // 忽略未使用的变量
+  private static _toActionableError(error: unknown): ActionableError {
+    const message = error instanceof Error ? error.message : String(error);
+    const lowered = message.toLowerCase();
 
-    await this._runSetupWizard();
+    if (lowered.includes('invalid') || lowered.includes('参数') || lowered.includes('option')) {
+      return {
+        category: 'argument',
+        summary: message,
+        action: '请检查命令参数，使用 --help 查看示例。',
+      };
+    }
+
+    if (lowered.includes('path') || lowered.includes('enoent') || lowered.includes('不存在')) {
+      return {
+        category: 'path',
+        summary: message,
+        action: '请确认输入/输出路径存在且可访问。',
+      };
+    }
+
+    if (lowered.includes('eacces') || lowered.includes('permission') || lowered.includes('权限')) {
+      return {
+        category: 'permission',
+        summary: message,
+        action: '请检查目录权限，必要时调整写入目录或权限设置。',
+      };
+    }
+
+    return {
+      category: 'runtime',
+      summary: message,
+      action: '请使用 --verbose 复现并检查详细日志。',
+    };
+  }
+
+  private static _printActionableError(error: ActionableError): void {
+    console.error(chalk.red('\n[CLI_ERROR]'));
+    console.error(`类别: ${error.category}`);
+    console.error(`摘要: ${error.summary}`);
+    console.error(`建议: ${error.action}`);
   }
 
   private static async _fileExists(filePath: string): Promise<boolean> {

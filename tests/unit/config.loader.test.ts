@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ConfigLoader } from '@/config/loader';
+import { PathValidator } from '@/utils/pathValidator';
 import fs from 'fs/promises';
 import path from 'path';
 
 // Mock fs module
 vi.mock('fs/promises');
 const mockFs = fs as any;
+
+// Mock path validator to keep loader tests focused on merge/trace behavior
+vi.spyOn(PathValidator, 'validateInputPath').mockResolvedValue(true);
+vi.spyOn(PathValidator, 'validateOutputPath').mockResolvedValue(true);
+vi.spyOn(PathValidator, 'validateExtensions').mockReturnValue(true);
 
 // Mock dotenv
 vi.mock('dotenv', () => ({
@@ -291,27 +297,49 @@ describe('ConfigLoader', () => {
 
     it('应该验证路径配置在运行时的有效性', async () => {
       const config = await ConfigLoader.loadConfig();
-      
+
       // 验证路径在运行时可以正常使用
       const path = await import('path');
-      
+
       // 验证输入路径可以安全地用于文件操作
       const inputPath = path.resolve(config.input.path);
       const outputPath = path.resolve(config.output.path);
-      
+
       // 验证路径是规范的（不包含 ./ 或 ../）
       expect(path.normalize(inputPath)).toBe(inputPath);
       expect(path.normalize(outputPath)).toBe(outputPath);
-      
+
       // 验证路径不是根目录
       expect(inputPath).not.toBe('/');
       expect(outputPath).not.toBe('/');
-      
+
       // 验证路径扩展名配置正确
       config.input.extensions.forEach((ext: string) => {
         expect(ext.startsWith('.')).toBe(true);
         expect(ext.length).toBeGreaterThan(1);
       });
+    });
+  });
+
+  describe('配置来源追踪', () => {
+    it('should expose source trace for effective config fields', async () => {
+      mockFs.access.mockRejectedValue(new Error('File not found'));
+
+      process.env.MARK2PDF_INPUT_PATH = './env-md';
+      const trace = await ConfigLoader.loadConfigWithTrace({
+        output: {
+          path: './cli-output',
+          createDirIfNotExist: true,
+          maintainDirStructure: true,
+        },
+      });
+
+      expect(trace.effectiveConfig.input.path).toBe('./env-md');
+      expect(trace.effectiveConfig.output.path).toBe('./cli-output');
+
+      expect(trace.sources['input.path']).toBe('env');
+      expect(trace.sources['output.path']).toBe('cli');
+      expect(trace.sources['options.format']).toBeDefined();
     });
   });
 });

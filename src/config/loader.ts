@@ -6,32 +6,55 @@ import * as yaml from 'js-yaml';
 import * as toml from 'toml';
 import { PathValidator } from '../utils/pathValidator';
 
+export type ConfigSource = 'default' | 'user' | 'file' | 'env' | 'cli';
+
+export interface ConfigLoadTrace {
+  sources: Record<string, ConfigSource>;
+  effectiveConfig: Mark2pdfConfig;
+}
+
+interface ConfigLayer {
+  source: ConfigSource;
+  config: Partial<Mark2pdfConfig>;
+}
+
 export class ConfigLoader {
   static async loadConfig(
     commandConfig: Partial<Mark2pdfConfig> = {}
   ): Promise<Mark2pdfConfig> {
-    // 加载环境变量
+    const { effectiveConfig } = await this.loadConfigWithTrace(commandConfig);
+    return effectiveConfig;
+  }
+
+  static async loadConfigWithTrace(
+    commandConfig: Partial<Mark2pdfConfig> = {}
+  ): Promise<ConfigLoadTrace> {
     dotenv.config();
 
-    // 获取默认配置作为基础
     const defaultConfig = this._getDefaultConfig();
-    
-    // 按优先级顺序加载其他配置
-    const configs = [
-      defaultConfig,
-      await this._loadUserConfig(),
-      await this._loadFileConfig(),
-      await this._loadEnvConfig(),
-      commandConfig,
+    const userConfig = await this._loadUserConfig();
+    const fileConfig = await this._loadFileConfig();
+    const envConfig = await this._loadEnvConfig();
+
+    const layers: ConfigLayer[] = [
+      { source: 'default', config: defaultConfig },
+      { source: 'user', config: userConfig },
+      { source: 'file', config: fileConfig },
+      { source: 'env', config: envConfig },
+      { source: 'cli', config: commandConfig },
     ];
 
-    const merged = this._mergeConfigs(configs);
+    const merged = this._mergeConfigs(layers.map((layer) => layer.config));
     const validated = this._validateConfig(merged);
-    
-    // 验证路径配置
+
     await this._validatePaths(validated);
-    
-    return validated;
+
+    const sources = this._resolveSources(layers, validated);
+
+    return {
+      sources,
+      effectiveConfig: validated,
+    };
   }
 
   private static _validateConfig(
@@ -84,48 +107,46 @@ export class ConfigLoader {
 
   private static _loadEnvConfig(): Partial<Mark2pdfConfig> {
     const config: Partial<Mark2pdfConfig> = {};
-    
-    // 检查环境变量是否存在且不是 'undefined' 字符串
+
     if (process.env.MARK2PDF_INPUT_PATH && process.env.MARK2PDF_INPUT_PATH !== 'undefined') {
-      config.input = { 
+      config.input = {
         path: process.env.MARK2PDF_INPUT_PATH,
         extensions: ['.md'],
       };
     }
-    
+
     if (process.env.MARK2PDF_OUTPUT_PATH && process.env.MARK2PDF_OUTPUT_PATH !== 'undefined') {
-      config.output = { 
+      config.output = {
         path: process.env.MARK2PDF_OUTPUT_PATH,
         createDirIfNotExist: true,
         maintainDirStructure: true,
       };
     }
-    
+
     const optionsConfig: any = {};
-    
+
     if (process.env.MARK2PDF_CONCURRENT && process.env.MARK2PDF_CONCURRENT !== 'undefined') {
       const concurrent = parseInt(process.env.MARK2PDF_CONCURRENT);
       if (!isNaN(concurrent)) {
         optionsConfig.concurrent = concurrent;
       }
     }
-    
+
     if (process.env.MARK2PDF_TIMEOUT && process.env.MARK2PDF_TIMEOUT !== 'undefined') {
       const timeout = parseInt(process.env.MARK2PDF_TIMEOUT);
       if (!isNaN(timeout)) {
         optionsConfig.timeout = timeout;
       }
     }
-    
+
     if (process.env.MARK2PDF_FORMAT && process.env.MARK2PDF_FORMAT !== 'undefined') {
       optionsConfig.format = process.env.MARK2PDF_FORMAT as 'A4' | 'Letter' | 'A3' | 'A5';
     }
-    
+
     if (Object.keys(optionsConfig).length > 0) {
       config.options = optionsConfig;
     }
-    
-    // 只有当有实际配置时才返回
+
     return Object.keys(config).length > 0 ? config : {};
   }
 
@@ -210,22 +231,68 @@ export class ConfigLoader {
   }
 
   private static async _validatePaths(config: Mark2pdfConfig): Promise<void> {
-    // 验证输入路径
     const isInputPathValid = await PathValidator.validateInputPath(config.input.path);
     if (!isInputPathValid) {
       throw new Error(`Invalid input path: ${config.input.path}`);
     }
 
-    // 验证输出路径
     const isOutputPathValid = await PathValidator.validateOutputPath(config.output.path);
     if (!isOutputPathValid) {
       throw new Error(`Invalid output path: ${config.output.path}`);
     }
 
-    // 验证扩展名配置
     const areExtensionsValid = PathValidator.validateExtensions(config.input.extensions);
     if (!areExtensionsValid) {
       throw new Error(`Invalid extensions configuration: ${JSON.stringify(config.input.extensions)}`);
+    }
+  }
+
+  private static _resolveSources(layers: ConfigLayer[], config: Mark2pdfConfig): Record<string, ConfigSource> {
+    const sources: Record<string, ConfigSource> = {};
+
+    for (const layer of layers) {
+      this._collectLeafPaths(layer.config, '', (leafPath) => {
+        sources[leafPath] = layer.source;
+      });
+    }
+
+    this._collectLeafPaths(config, '', (leafPath) => {
+      if (!sources[leafPath]) {
+        sources[leafPath] = 'default';
+      }
+    });
+
+    return sources;
+  }
+
+  private static _collectLeafPaths(
+    value: unknown,
+    basePath: string,
+    onLeaf: (path: string) => void
+  ): void {
+    if (Array.isArray(value)) {
+      if (basePath) {
+        onLeaf(basePath);
+      }
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length === 0 && basePath) {
+        onLeaf(basePath);
+        return;
+      }
+
+      for (const [key, child] of entries) {
+        const childPath = basePath ? `${basePath}.${key}` : key;
+        this._collectLeafPaths(child, childPath, onLeaf);
+      }
+      return;
+    }
+
+    if (value !== undefined && value !== null && basePath) {
+      onLeaf(basePath);
     }
   }
 }

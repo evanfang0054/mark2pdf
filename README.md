@@ -135,25 +135,34 @@ mark2pdf html --help
 mark2pdf merge --help
 ```
 
-#### 2.2 转换 Markdown 为 PDF
+#### 2.2 统一入口 `convert`（按输入类型自动分发）
 ```bash
-# 使用默认配置转换
+# 使用默认配置转换（默认输入 ./public/md）
 mark2pdf convert
 
-# 指定输入输出目录
+# 指定输入输出目录（目录或单文件都可）
 mark2pdf convert -i ./docs -o ./output
 
-# 使用自定义配置文件
-mark2pdf convert -c ./my-config.json
+# 指定页面规格（用于 PDF 输出）
+mark2pdf convert --page-size A4
 
-# 设置并发数和超时时间
-mark2pdf convert --concurrent 5 --timeout 60000
+# 文本提取输出格式（用于 docx/pdf 提取）
+mark2pdf convert -i ./input --out-format md
+
+# 仅生成执行计划，不产生任何文件
+mark2pdf convert -i ./docs --dry-run
+
+# 打印最终生效配置及来源
+mark2pdf convert --show-config
+
+# 输出结构化执行报告 JSON
+mark2pdf convert --report-json ./dist/report.json
 
 # 启用详细输出
 mark2pdf convert --verbose
 
-# 自定义页面格式
-mark2pdf convert --format A4 --orientation landscape
+# 兼容旧参数（会提示弃用）
+mark2pdf convert --format A4
 ```
 
 #### 2.3 转换 HTML 为 PDF
@@ -164,14 +173,11 @@ mark2pdf html
 # 指定输入输出目录
 mark2pdf html -i ./html-files -o ./pdf-output
 
-# 自定义页面边距
-mark2pdf html --margin-top "2cm" --margin-bottom "1cm"
+# 指定页面格式
+mark2pdf html --format A4
 
-# 启用背景打印
-mark2pdf html --print-background true
-
-# 设置页面范围
-mark2pdf html --page-ranges "1-5,8-10"
+# 启用详细输出
+mark2pdf html --verbose
 ```
 
 #### 2.4 合并 PDF 文件
@@ -295,11 +301,17 @@ mark2pdf convert --concurrent 8
 
 #### 4.2 生成技术文档 PDF
 ```bash
-# 转换文档并指定格式
-mark2pdf convert --format A4 --orientation landscape
+# 新参数：页面规格（推荐）
+mark2pdf convert --page-size A4
+
+# 旧参数兼容：仍可运行，但会提示弃用
+mark2pdf convert --format A4
 
 # 设置并发数和超时
 mark2pdf convert --concurrent 5 --timeout 60000
+
+# 先查看执行计划（无副作用）
+mark2pdf convert -i ./project-docs --dry-run
 ```
 
 #### 4.3 合并多个 PDF
@@ -307,8 +319,8 @@ mark2pdf convert --concurrent 5 --timeout 60000
 # 合并章节 PDF 为完整文档
 mark2pdf merge -i ./chapters -o ./complete-book.pdf
 
-# 按文件名排序合并
-mark2pdf merge --sort-enabled true --sort-method name
+# 合并时输出详细日志
+mark2pdf merge --verbose
 ```
 
 ### 5. 高级功能
@@ -379,8 +391,11 @@ ls -la ./docs ./output
 # 启用详细输出
 mark2pdf convert --verbose
 
-# 检查配置加载
-mark2pdf convert --config ./config.json --verbose
+# 检查配置加载与来源
+mark2pdf convert --show-config
+
+# 同步输出结构化报告，便于 CI/脚本消费
+mark2pdf convert --report-json ./dist/report.json
 ```
 
 ### 7. 性能优化

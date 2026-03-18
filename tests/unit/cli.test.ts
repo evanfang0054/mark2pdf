@@ -1,75 +1,124 @@
 import { describe, it, expect } from 'vitest';
-import { CLIHandler } from '../src/cli';
+import { CLIHandler } from '@/cli/handler';
 
-describe('CLI Handler', () => {
-  // 测试选项转换的私有方法
-  it('should transform CLI options to config format correctly', () => {
-    const options = {
-      input: './test-input',
-      output: './test-output',
-      concurrent: 5,
-      timeout: 60000,
-      format: 'A3',
-      theme: 'modern'
-    };
+describe('CLIHandler (P0/P1)', () => {
+  const handler = CLIHandler as any;
 
-    // 由于 _transformOptionsToConfig 是私有方法，我们通过公共接口间接测试
-    const expectedConfig = {
-      input: { path: './test-input' },
-      output: { path: './test-output' },
-      options: {
+  describe('_normalizeCliOptions', () => {
+    it('maps unified options directly', () => {
+      const { unifiedOptions, deprecations } = handler._normalizeCliOptions({
+        input: './docs',
+        output: './dist',
+        pageSize: 'A3',
+        outFormat: 'md',
+        dryRun: true,
+        showConfig: true,
+        reportJson: './dist/report.json',
+        verbose: true,
+      });
+
+      expect(unifiedOptions.input).toBe('./docs');
+      expect(unifiedOptions.output).toBe('./dist');
+      expect(unifiedOptions.pageSize).toBe('A3');
+      expect(unifiedOptions.outputFormat).toBe('md');
+      expect(unifiedOptions.dryRun).toBe(true);
+      expect(unifiedOptions.showConfig).toBe(true);
+      expect(unifiedOptions.reportJson).toBe('./dist/report.json');
+      expect(unifiedOptions.verbose).toBe(true);
+      expect(deprecations).toEqual([]);
+    });
+
+    it('maps deprecated --format to --page-size and emits deprecation', () => {
+      const { unifiedOptions, deprecations } = handler._normalizeCliOptions({
+        format: 'Letter',
+      });
+
+      expect(unifiedOptions.pageSize).toBe('Letter');
+      expect(deprecations).toHaveLength(1);
+      expect(deprecations[0]).toEqual({
+        legacy: '--format',
+        replacement: '--page-size',
+      });
+    });
+  });
+
+  describe('_transformOptionsToConfig', () => {
+    it('transforms CLI options to executable config', () => {
+      const config = handler._transformOptionsToConfig({
+        input: './docs',
+        output: './dist',
         concurrent: 5,
         timeout: 60000,
-        format: 'A3',
-        theme: 'modern'
-      }
-    };
+        pageSize: 'A5',
+        theme: 'modern',
+      });
 
-    // 验证转换逻辑（这里我们只是验证预期的转换结果）
-    expect(options.input).toBe('./test-input');
-    expect(options.output).toBe('./test-output');
-    expect(options.concurrent).toBe(5);
-    expect(options.timeout).toBe(60000);
-    expect(options.format).toBe('A3');
-    expect(options.theme).toBe('modern');
+      expect(config.input).toEqual({ path: './docs', extensions: ['.md'] });
+      expect(config.output).toEqual({
+        path: './dist',
+        createDirIfNotExist: true,
+        maintainDirStructure: true,
+      });
+      expect(config.options).toMatchObject({
+        concurrent: 5,
+        timeout: 60000,
+        format: 'A5',
+        theme: 'modern',
+      });
+    });
+
+    it('keeps config minimal when no option overrides are given', () => {
+      const config = handler._transformOptionsToConfig({
+        input: './docs',
+      });
+
+      expect(config.input?.path).toBe('./docs');
+      expect(config.options).toBeUndefined();
+    });
   });
 
-  it('should handle string to number conversion for concurrent', () => {
-    const options = {
-      concurrent: '7'
-    };
+  describe('_toActionableError', () => {
+    it('classifies argument errors', () => {
+      const actionable = handler._toActionableError(new Error('invalid option --foo'));
+      expect(actionable.category).toBe('argument');
+    });
 
-    expect(parseInt(options.concurrent as string)).toBe(7);
+    it('classifies path errors', () => {
+      const actionable = handler._toActionableError(new Error('ENOENT: no such file or directory'));
+      expect(actionable.category).toBe('path');
+    });
+
+    it('classifies permission errors', () => {
+      const actionable = handler._toActionableError(new Error('EACCES: permission denied'));
+      expect(actionable.category).toBe('permission');
+    });
+
+    it('falls back to runtime error', () => {
+      const actionable = handler._toActionableError(new Error('unexpected failure'));
+      expect(actionable.category).toBe('runtime');
+    });
   });
 
-  it('should handle string to number conversion for timeout', () => {
-    const options = {
-      timeout: '45000'
-    };
+  describe('report and sensitive masking helpers', () => {
+    it('builds structured report fields correctly', () => {
+      const report = handler._buildReport('convert', 10, 8, 2, 1200, [
+        { file: './a.md', error: 'failed' },
+      ]);
 
-    expect(parseInt(options.timeout as string)).toBe(45000);
-  });
+      expect(report).toEqual({
+        command: 'convert',
+        total: 10,
+        success: 8,
+        failed: 2,
+        durationMs: 1200,
+        failedDetails: [{ file: './a.md', error: 'failed' }],
+      });
+    });
 
-  it('should handle missing options gracefully', () => {
-    const options = {};
-
-    expect(options).toEqual({});
-  });
-
-  it('should handle verbose flag correctly', () => {
-    const options = {
-      verbose: true
-    };
-
-    expect(options.verbose).toBe(true);
-  });
-
-  it('should handle different command types', () => {
-    const commands = ['convert', 'merge', 'html', 'init'];
-    
-    commands.forEach(command => {
-      expect(typeof command).toBe('string');
-      expect(commands.includes(command)).toBe(true);
+    it('detects sensitive config paths', () => {
+      expect(handler._isSensitivePath('auth.apiKey')).toBe(true);
+      expect(handler._isSensitivePath('runtime.password')).toBe(true);
+      expect(handler._isSensitivePath('output.path')).toBe(false);
     });
   });
 });
