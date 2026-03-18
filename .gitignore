@@ -38,3 +38,6 @@ public_dist
 # 操作系统文件
 .DS_Store
 Thumbs.db
+
+# OpenSpec
+openspec/
