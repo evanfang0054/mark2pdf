@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { CLIHandler } from '@/cli/handler';
+import { createProgram, runCli } from '@/bin/mark2pdf';
 
 describe('CLIHandler (P0/P1)', () => {
   const handler = CLIHandler as any;
@@ -120,5 +121,98 @@ describe('CLIHandler (P0/P1)', () => {
       expect(handler._isSensitivePath('runtime.password')).toBe(true);
       expect(handler._isSensitivePath('output.path')).toBe(false);
     });
+  });
+});
+
+describe('CLI arg_parse handling', () => {
+  it('returns exit code 1 for invalid option and skips handler execution', async () => {
+    let handlerCalled = false;
+    const fakeHandler = async () => {
+      handlerCalled = true;
+    };
+
+    const exitCode = await runCli(['node', 'mark2pdf', 'convert', '--unknown-option'], fakeHandler);
+
+    expect(exitCode).toBe(1);
+    expect(handlerCalled).toBe(false);
+  });
+
+  it('keeps output option without hardcoded default value', () => {
+    const program = createProgram(async () => undefined);
+    const convert = program.commands.find((command) => command.name() === 'convert');
+
+    expect(convert).toBeDefined();
+
+    const outputOption = convert!.options.find((option) => option.long === '--output');
+
+    expect(outputOption).toBeDefined();
+    expect(outputOption!.defaultValue).toBeUndefined();
+  });
+});
+
+describe('CLI output/report policy helpers', () => {
+  const handler = CLIHandler as any;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('prefers command-scoped default output when config source is default', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/tmp/ws');
+
+    const outputPath = handler._resolveOutputPath(
+      'merge',
+      { output: undefined },
+      { output: { path: './dist/pdf' } },
+      { 'output.path': 'default' }
+    );
+
+    expect(outputPath).toBe('/tmp/ws/output/merge');
+  });
+
+  it('keeps config output when it comes from non-default source', () => {
+    const outputPath = handler._resolveOutputPath(
+      'convert',
+      { output: undefined },
+      { output: { path: './custom-config-output' } },
+      { 'output.path': 'file' }
+    );
+
+    expect(outputPath).toBe('./custom-config-output');
+  });
+
+  it('builds latest report with required schema fields', () => {
+    const report = handler._buildLatestExecutionReport({
+      command: 'convert',
+      status: 'failed',
+      stage: 'execute',
+      startedAt: new Date('2026-03-19T10:00:00.000Z'),
+      endedAt: new Date('2026-03-19T10:00:01.000Z'),
+      inputPath: './input',
+      outputPath: './output/convert',
+      errorMessage: 'boom',
+    });
+
+    expect(report).toMatchObject({
+      runId: expect.any(String),
+      command: 'convert',
+      status: 'failed',
+      stage: 'execute',
+      startedAt: '2026-03-19T10:00:00.000Z',
+      endedAt: '2026-03-19T10:00:01.000Z',
+      inputPath: './input',
+      outputPath: './output/convert',
+      errorMessage: 'boom',
+    });
+  });
+
+  it('prints one-line failure summary with stage and latest report path', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    handler._printFailureSummary('convert', 'input_validate', 'output/convert/_latest-report.json');
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining('❌ convert 失败（阶段：input_validate），详情：output/convert/_latest-report.json')
+    );
   });
 });

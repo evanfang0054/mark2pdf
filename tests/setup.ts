@@ -1,5 +1,7 @@
 import { vi, beforeEach, afterEach } from 'vitest';
 
+process.env.MARK2PDF_TEST = '1';
+
 // Mock global console methods for cleaner test output
 global.console = {
   ...console,

@@ -12,6 +12,7 @@ import { PdfExtractor } from '../core/PdfExtractor';
 import { DocxConverter } from '../core/DocxConverter';
 import { detectInputType, InputType } from '../utils/inputDetector';
 import { getAllFiles } from '../utils/fileUtils';
+import { resolveDefaultOutputPath, resolveEffectiveOutputPath, resolveLatestReportPath, SupportedCommand } from './output-policy';
 
 interface DeprecationEntry {
   legacy: string;
@@ -63,6 +64,22 @@ interface StructuredExecutionReport {
   failedDetails: Array<{ file: string; error: string }>;
 }
 
+type ExecutionStage = 'arg_parse' | 'input_validate' | 'execute' | 'write_output' | 'write_report';
+
+type ExecutionStatus = 'success' | 'failed';
+
+interface LatestExecutionReport {
+  runId: string;
+  command: SupportedCommand;
+  status: ExecutionStatus;
+  stage: ExecutionStage;
+  startedAt: string;
+  endedAt: string;
+  inputPath: string;
+  outputPath: string;
+  errorMessage?: string;
+}
+
 /**
  * 递归获取目录下所有指定扩展名的文件
  */
@@ -94,15 +111,47 @@ async function getAllFilesByExt(dir: string, ext: string): Promise<string[]> {
 
 export class CLIHandler {
   static async handleCommand(command: string, options: any) {
-    const startedAt = Date.now();
+    const startedAt = new Date();
+    let stage: ExecutionStage = 'input_validate';
+
+    const { unifiedOptions, deprecations } = this._normalizeCliOptions(options || {});
+    this._printDeprecations(deprecations);
+
+    if (command === 'init') {
+      try {
+        await this._handleInit(unifiedOptions);
+        return;
+      } catch (error) {
+        const actionable = this._toActionableError(error);
+        this._printActionableError(actionable);
+        process.exit(1);
+      }
+    }
+
+    const normalizedCommand = this._toSupportedCommand(command);
+    if (!normalizedCommand) {
+      const actionable = this._toActionableError(new Error(`Unsupported command: ${command}`));
+      this._printActionableError(actionable);
+      process.exit(1);
+    }
+
+    let latestReportPath = resolveLatestReportPath(normalizedCommand, process.cwd());
+    let reportOutputPath = resolveDefaultOutputPath(normalizedCommand, process.cwd());
+    let reportInputPath = unifiedOptions.input || '';
 
     try {
-      const { unifiedOptions, deprecations } = this._normalizeCliOptions(options || {});
-      this._printDeprecations(deprecations);
-
       const commandConfig = this._transformOptionsToConfig(unifiedOptions);
       const loaded = await ConfigLoader.loadConfigWithTrace(commandConfig);
       const config = loaded.effectiveConfig;
+
+      const resolvedOutputPath = this._resolveOutputPath(normalizedCommand, unifiedOptions, config, loaded.sources);
+      config.output = {
+        ...config.output,
+        path: resolvedOutputPath,
+      };
+
+      reportOutputPath = resolvedOutputPath;
+      reportInputPath = unifiedOptions.input || config.input?.path || '';
 
       const progress = new ProgressIndicator({ verbose: unifiedOptions.verbose || false });
 
@@ -110,14 +159,15 @@ export class CLIHandler {
         this._printEffectiveConfig(config, loaded.sources);
       }
 
-      if (command === 'convert' && await this._isFirstRun()) {
+      if (normalizedCommand === 'convert' && await this._isFirstRun()) {
         await this._runSetupWizard();
         return;
       }
 
       let report: StructuredExecutionReport | undefined;
 
-      switch (command) {
+      stage = 'execute';
+      switch (normalizedCommand) {
         case 'convert':
           report = await this._handleConvertUnified(config, progress, unifiedOptions);
           break;
@@ -142,28 +192,66 @@ export class CLIHandler {
           report = await this._handleExtract(config, progress, unifiedOptions);
           break;
         }
-        case 'init':
-          await this._handleInit(unifiedOptions);
-          break;
       }
 
+      stage = 'write_output';
       if (report) {
-        this._printExecutionSummary(report);
+        this._printSuccessSummary(normalizedCommand, reportOutputPath);
       }
 
       if (report && unifiedOptions.reportJson) {
         await this._writeStructuredReport(unifiedOptions.reportJson, report);
       }
 
-      if (command !== 'init') {
-        progress.complete();
+      stage = 'write_report';
+      if (report) {
+        const latestReport = this._buildLatestExecutionReport({
+          command: normalizedCommand,
+          status: 'success',
+          stage: 'write_output',
+          startedAt,
+          endedAt: new Date(),
+          inputPath: reportInputPath,
+          outputPath: reportOutputPath,
+        });
+
+        try {
+          await this._writeLatestReport(latestReportPath, latestReport);
+        } catch (writeReportError) {
+          console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+          process.exit(1);
+        }
       }
+
+      progress.complete();
     } catch (error) {
+      if (error instanceof Error && /^Process exited with code \d+$/u.test(error.message)) {
+        throw error;
+      }
+
+      if (stage !== 'write_report') {
+        const failedReport = this._buildLatestExecutionReport({
+          command: normalizedCommand,
+          status: 'failed',
+          stage,
+          startedAt,
+          endedAt: new Date(),
+          inputPath: reportInputPath,
+          outputPath: reportOutputPath,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+
+        try {
+          await this._writeLatestReport(latestReportPath, failedReport);
+        } catch (writeReportError) {
+          console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+        }
+      }
+
+      this._printFailureSummary(normalizedCommand, stage, latestReportPath);
       const actionable = this._toActionableError(error);
       this._printActionableError(actionable);
       process.exit(1);
-    } finally {
-      void startedAt;
     }
   }
 
@@ -767,27 +855,78 @@ export class CLIHandler {
     };
   }
 
-  private static _printExecutionSummary(report: StructuredExecutionReport): void {
-    console.log('');
-    console.log(chalk.gray('═'.repeat(50)));
-    console.log(chalk.bold.cyan(`📋 执行摘要 (${report.command})`));
-    console.log(chalk.gray('═'.repeat(50)));
-    console.log(`  总计: ${chalk.white(report.total.toString())} 项`);
-    console.log(`  成功: ${chalk.green(report.success.toString())} 项`);
-    console.log(`  失败: ${report.failed > 0 ? chalk.red(report.failed.toString()) : chalk.gray('0')} 项`);
-    console.log(`  耗时: ${chalk.white(`${report.durationMs}ms`)}`);
-
-    if (report.failedDetails.length > 0) {
-      console.log(chalk.yellow('  失败明细:'));
-      for (const item of report.failedDetails.slice(0, 5)) {
-        console.log(chalk.yellow(`    - ${item.file}: ${item.error}`));
-      }
-      if (report.failedDetails.length > 5) {
-        console.log(chalk.yellow(`    ... 其余 ${report.failedDetails.length - 5} 项请查看 JSON 报告`));
-      }
+  private static _toSupportedCommand(command: string): SupportedCommand | undefined {
+    if (command === 'convert' || command === 'html' || command === 'merge' || command === 'extract') {
+      return command;
     }
 
-    console.log(chalk.gray('═'.repeat(50)));
+    return undefined;
+  }
+
+  private static _resolveOutputPath(
+    command: SupportedCommand,
+    options: UnifiedCLIOptions,
+    config: Mark2pdfConfig,
+    sources: Record<string, ConfigSource>
+  ): string {
+    const cliOutput = options.output;
+    const configOutput = config.output?.path;
+    const outputSource = sources['output.path'];
+
+    if (!cliOutput && outputSource === 'default') {
+      return resolveDefaultOutputPath(command, process.cwd());
+    }
+
+    if (!cliOutput && configOutput) {
+      return configOutput;
+    }
+
+    return resolveEffectiveOutputPath(command, cliOutput, process.cwd());
+  }
+
+  private static _buildLatestExecutionReport(input: {
+    command: SupportedCommand;
+    status: ExecutionStatus;
+    stage: ExecutionStage;
+    startedAt: Date;
+    endedAt: Date;
+    inputPath: string;
+    outputPath: string;
+    errorMessage?: string;
+  }): LatestExecutionReport {
+    const report: LatestExecutionReport = {
+      runId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      command: input.command,
+      status: input.status,
+      stage: input.stage,
+      startedAt: input.startedAt.toISOString(),
+      endedAt: input.endedAt.toISOString(),
+      inputPath: input.inputPath,
+      outputPath: input.outputPath,
+    };
+
+    if (input.errorMessage) {
+      report.errorMessage = input.errorMessage;
+    }
+
+    return report;
+  }
+
+  private static async _writeLatestReport(reportPath: string, report: LatestExecutionReport): Promise<void> {
+    await fs.mkdir(path.dirname(reportPath), { recursive: true });
+    await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf-8');
+  }
+
+  private static _printSuccessSummary(command: SupportedCommand, outputPath: string): void {
+    console.log(chalk.green(`✅ ${command} 完成，输出目录：${outputPath}`));
+  }
+
+  private static _printFailureSummary(
+    command: SupportedCommand,
+    stage: ExecutionStage,
+    latestReportPath: string
+  ): void {
+    console.error(chalk.red(`❌ ${command} 失败（阶段：${stage}），详情：${latestReportPath}`));
   }
 
   private static _toActionableError(error: unknown): ActionableError {
