@@ -41,3 +41,6 @@ Thumbs.db
 
 # OpenSpec
 openspec/
+
+# Local git worktrees
+.worktrees/
