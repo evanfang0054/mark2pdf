@@ -114,6 +114,27 @@ mark2pdf init [options]
 
 - `-g, --global` create global config
 
+## Global flags
+
+- `--json`: structured JSON output (agent mode)
+- `--no-color`: disable colors
+- `-q, --quiet`: quiet mode (errors only)
+- `-v, --verbose`: verbose logs
+- `--no-input`: disable interactive prompts
+- `--limit <n>`: max files to process (default 50, 0 = unlimited)
+
+## Configuration precedence
+
+Configuration loads in this order (highest first):
+
+1. **CLI flags** (e.g., `--input ./docs`)
+2. **Environment variables** (`MARK2PDF_INPUT_PATH`, `MARK2PDF_OUTPUT_PATH`)
+3. **Project config** (`./mark2pdf.config.json`, `./config.json`)
+4. **User config** (`~/.mark2pdf/config.json`)
+5. **Defaults**
+
+See [docs/cli-spec.md](./docs/cli-spec.md) for full CLI specification.
+
 ## Output and reports (KISS)
 
 - Default output root: `./output/<command>`

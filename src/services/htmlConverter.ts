@@ -46,25 +46,37 @@ export class HtmlConverterService {
 
   async convertAll(inputPath: string, outputPath: string): Promise<HtmlConversionSummary> {
     const startTime = Date.now();
-    const results: HtmlConversionResult[] = [];
 
     // 扫描 HTML 文件
     this.progress.info('正在扫描 HTML 文件...');
     const htmlFiles = await getAllFiles(inputPath, '.html') as string[];
+    return this.convertFiles(htmlFiles, inputPath, outputPath, startTime, false);
+  }
+
+  async convertFiles(
+    htmlFiles: string[],
+    inputBase: string,
+    outputBase: string,
+    startTime: number = Date.now(),
+    logScanResult: boolean = true
+  ): Promise<HtmlConversionSummary> {
+    const results: HtmlConversionResult[] = [];
 
     if (htmlFiles.length === 0) {
       this.progress.warn('未找到任何 HTML 文件');
       return { total: 0, success: 0, failed: 0, duration: 0, failedFiles: [] };
     }
 
-    this.progress.info(`找到 ${chalk.cyan(htmlFiles.length.toString())} 个 HTML 文件`);
+    if (logScanResult) {
+      this.progress.info(`找到 ${chalk.cyan(htmlFiles.length.toString())} 个 HTML 文件`);
+    }
 
     // 确保输出目录存在
-    await ensureDir(outputPath);
+    await ensureDir(outputBase);
 
     // 转换所有文件
     for (const htmlFile of htmlFiles) {
-      const result = await this.convertFile(htmlFile, inputPath, outputPath);
+      const result = await this.convertFile(htmlFile, inputBase, outputBase);
       results.push(result);
     }
 

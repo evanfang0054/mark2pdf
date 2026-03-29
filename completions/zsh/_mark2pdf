@@ -1,0 +1,95 @@
+#compdef mark2pdf
+# mark2pdf zsh completion
+
+local context state line
+
+typeset -a global_options
+global_options=(
+  '--json[结构化 JSON 输出]'
+  '--no-color[禁用颜色输出]'
+  '-q[静默模式]'
+  '--quiet[静默模式]'
+  '--no-input[禁用交互式提示]'
+  '-v[详细输出]'
+  '--verbose[详细输出]'
+  '--limit[最大处理文件数]:number'
+  '--help[显示帮助]'
+  '--version[显示版本]'
+)
+
+_arguments -C \
+  ${global_options[@]} \
+  '1:command:(convert html merge extract init completion)' \
+  '*::arg:->args'
+
+case $state in
+  args)
+    case $words[2] in
+      convert)
+        _arguments \
+          ${global_options[@]} \
+          '-i[输入文件或目录]:path:_files' \
+          '--input[输入文件或目录]:path:_files' \
+          '-o[输出目录]:path:_files -/' \
+          '--output[输出目录]:path:_files -/' \
+          '-c[配置文件路径]:path:_files' \
+          '--config[配置文件路径]:path:_files' \
+          '-t[PDF 主题名称]:name:' \
+          '--theme[PDF 主题名称]:name:' \
+          '--concurrent[并发数]:number:' \
+          '--timeout[超时时间(ms)]:number:' \
+          '--page-size[PDF 页面规格]:(A4 Letter A3 A5)' \
+          '--out-format[文本输出格式]:(txt md json)' \
+          '--dry-run[仅输出执行计划]' \
+          '--show-config[打印最终生效配置及来源]' \
+          '--report-json[输出结构化执行报告 JSON 文件]:path:_files' \
+          '--verbose[详细输出]'
+        ;;
+      html)
+        _arguments \
+          ${global_options[@]} \
+          '-i[输入目录]:path:_files -/' \
+          '--input[输入目录]:path:_files -/' \
+          '-o[输出目录]:path:_files -/' \
+          '--output[输出目录]:path:_files -/' \
+          '-c[配置文件路径]:path:_files' \
+          '--config[配置文件路径]:path:_files' \
+          '--format[页面格式]:(A4 Letter A3 A5)' \
+          '--verbose[详细输出]'
+        ;;
+      merge)
+        _arguments \
+          ${global_options[@]} \
+          '-i[输入目录]:path:_files -/' \
+          '--input[输入目录]:path:_files -/' \
+          '-o[输出目录]:path:_files -/' \
+          '--output[输出目录]:path:_files -/' \
+          '-c[配置文件路径]:path:_files' \
+          '--config[配置文件路径]:path:_files' \
+          '--verbose[详细输出]'
+        ;;
+      extract)
+        _arguments \
+          ${global_options[@]} \
+          '-i[输入文件或目录]:path:_files' \
+          '--input[输入文件或目录]:path:_files' \
+          '-o[输出目录]:path:_files -/' \
+          '--output[输出目录]:path:_files -/' \
+          '--out-format[输出格式]:(txt md json)' \
+          '-f[已弃用，请使用 --out-format]:format:(txt md json)' \
+          '--format[已弃用，请使用 --out-format]:format:(txt md json)' \
+          '--verbose[详细输出]'
+        ;;
+      init)
+        _arguments \
+          ${global_options[@]} \
+          '-g[创建全局配置]' \
+          '--global[创建全局配置]'
+        ;;
+      completion)
+        _arguments \
+          '1:shell:(bash zsh)'
+        ;;
+    esac
+    ;;
+esac

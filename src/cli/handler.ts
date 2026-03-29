@@ -12,6 +12,8 @@ import { PdfExtractor } from '../core/PdfExtractor';
 import { DocxConverter } from '../core/DocxConverter';
 import { detectInputType, InputType } from '../utils/inputDetector';
 import { getAllFiles } from '../utils/fileUtils';
+import { JsonOutput } from '../utils/jsonOutput';
+import { ErrorFormatter } from '../utils/errorFormatter';
 import { resolveDefaultOutputPath, resolveEffectiveOutputPath, resolveLatestReportPath, SupportedCommand } from './output-policy';
 
 interface DeprecationEntry {
@@ -33,6 +35,11 @@ interface UnifiedCLIOptions {
   showConfig?: boolean;
   reportJson?: string;
   verbose?: boolean;
+  json?: boolean;
+  quiet?: boolean;
+  noColor?: boolean;
+  noInput?: boolean;
+  limit?: number;
 }
 
 interface ConvertPlanItem {
@@ -115,15 +122,26 @@ export class CLIHandler {
     let stage: ExecutionStage = 'input_validate';
 
     const { unifiedOptions, deprecations } = this._normalizeCliOptions(options || {});
-    this._printDeprecations(deprecations);
+    const jsonOutput = new JsonOutput({
+      quiet: unifiedOptions.quiet || false,
+      json: unifiedOptions.json || false,
+    });
+
+    if (unifiedOptions.noColor || process.env.NO_COLOR) {
+      chalk.level = 0;
+    }
+
+    if (!jsonOutput.shouldSuppressOutput()) {
+      this._printDeprecations(deprecations);
+    }
 
     if (command === 'init') {
       try {
-        await this._handleInit(unifiedOptions);
+        await this._handleInit(unifiedOptions, jsonOutput);
         return;
       } catch (error) {
         const actionable = this._toActionableError(error);
-        this._printActionableError(actionable);
+        this._printActionableError(actionable, jsonOutput);
         process.exit(1);
       }
     }
@@ -131,7 +149,7 @@ export class CLIHandler {
     const normalizedCommand = this._toSupportedCommand(command);
     if (!normalizedCommand) {
       const actionable = this._toActionableError(new Error(`Unsupported command: ${command}`));
-      this._printActionableError(actionable);
+      this._printActionableError(actionable, jsonOutput);
       process.exit(1);
     }
 
@@ -153,14 +171,18 @@ export class CLIHandler {
       reportOutputPath = resolvedOutputPath;
       reportInputPath = unifiedOptions.input || config.input?.path || '';
 
-      const progress = new ProgressIndicator({ verbose: unifiedOptions.verbose || false });
+      const progress = new ProgressIndicator({
+        verbose: unifiedOptions.verbose || false,
+        json: unifiedOptions.json || false,
+        quiet: unifiedOptions.quiet || false,
+      });
 
       if (unifiedOptions.showConfig) {
-        this._printEffectiveConfig(config, loaded.sources);
+        this._printEffectiveConfig(config, loaded.sources, jsonOutput);
       }
 
-      if (normalizedCommand === 'convert' && await this._isFirstRun()) {
-        await this._runSetupWizard();
+      if (normalizedCommand === 'convert' && !unifiedOptions.noInput && await this._isFirstRun()) {
+        await this._runSetupWizard(jsonOutput);
         return;
       }
 
@@ -196,11 +218,11 @@ export class CLIHandler {
 
       stage = 'write_output';
       if (report) {
-        this._printSuccessSummary(normalizedCommand, reportOutputPath);
+        this._printSuccessSummary(normalizedCommand, reportOutputPath, jsonOutput);
       }
 
       if (report && unifiedOptions.reportJson) {
-        await this._writeStructuredReport(unifiedOptions.reportJson, report);
+        await this._writeStructuredReport(unifiedOptions.reportJson, report, jsonOutput);
       }
 
       stage = 'write_report';
@@ -218,7 +240,9 @@ export class CLIHandler {
         try {
           await this._writeLatestReport(latestReportPath, latestReport);
         } catch (writeReportError) {
-          console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+          if (!jsonOutput.isJsonMode()) {
+            console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+          }
           process.exit(1);
         }
       }
@@ -244,13 +268,15 @@ export class CLIHandler {
         try {
           await this._writeLatestReport(latestReportPath, failedReport);
         } catch (writeReportError) {
-          console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+          if (!jsonOutput.isJsonMode()) {
+            console.error(chalk.red(`write_report 失败: ${writeReportError instanceof Error ? writeReportError.message : String(writeReportError)}`));
+          }
         }
       }
 
-      this._printFailureSummary(normalizedCommand, stage, latestReportPath);
+      this._printFailureSummary(normalizedCommand, stage, latestReportPath, jsonOutput);
       const actionable = this._toActionableError(error);
-      this._printActionableError(actionable);
+      this._printActionableError(actionable, jsonOutput);
       process.exit(1);
     }
   }
@@ -272,13 +298,39 @@ export class CLIHandler {
       showConfig: Boolean(options.showConfig),
       reportJson: options.reportJson,
       verbose: Boolean(options.verbose),
+      json: Boolean(options.json),
+      quiet: Boolean(options.quiet),
+      noColor: Boolean(options.noColor),
+      noInput: Boolean(options.noInput),
+      limit: Number.isFinite(Number(options.limit)) ? Number(options.limit) : 50,
     };
 
     const deprecations: DeprecationEntry[] = [];
 
-    if (options.format && !unified.pageSize) {
-      unified.pageSize = options.format;
-      deprecations.push({ legacy: '--format', replacement: '--page-size' });
+    const hasFormatOption = Object.prototype.hasOwnProperty.call(options, 'format');
+    const hasPageSizeOption = Object.prototype.hasOwnProperty.call(options, 'pageSize');
+    const hasOutFormatOption = Object.prototype.hasOwnProperty.call(options, 'outFormat');
+
+    if (hasFormatOption && options.format !== undefined) {
+      if (hasOutFormatOption && !hasPageSizeOption) {
+        unified.outputFormat = options.format;
+        deprecations.push({
+          legacy: '--format',
+          replacement: '--out-format',
+          note: 'extract 命令的 --format 将在 v4.0.0 移除',
+        });
+      } else {
+        unified.pageSize = options.format;
+        deprecations.push({
+          legacy: '--format',
+          replacement: '--page-size',
+          note: 'convert 命令的 --format 将在 v4.0.0 移除',
+        });
+      }
+    }
+
+    if (process.env.NO_COLOR) {
+      unified.noColor = true;
     }
 
     return { unifiedOptions: unified, deprecations };
@@ -339,7 +391,11 @@ export class CLIHandler {
     return !(await this._fileExists(userConfigPath));
   }
 
-  private static async _runSetupWizard() {
+  private static async _runSetupWizard(jsonOutput?: JsonOutput) {
+    if (jsonOutput?.isJsonMode()) {
+      throw new Error('JSON 模式下不支持交互式初始化，请使用 --no-input 或直接提供命令参数。');
+    }
+
     console.log(chalk.blue('欢迎使用 mark2pdf！首次使用需要配置基本参数：\n'));
 
     const answers = await inquirer.prompt([
@@ -445,10 +501,19 @@ export class CLIHandler {
     progress: ProgressIndicator,
     options: UnifiedCLIOptions
   ): Promise<StructuredExecutionReport> {
-    const plan = await this._buildConvertExecutionPlan(config, options);
+    let plan = await this._buildConvertExecutionPlan(config, options);
+
+    const limit = options.limit ?? 50;
+    const hasMore = limit > 0 && plan.items.length > limit;
+    if (hasMore) {
+      plan = {
+        ...plan,
+        items: plan.items.slice(0, limit),
+      };
+    }
 
     if (options.dryRun) {
-      this._printDryRunPlan(plan);
+      this._printDryRunPlan(plan, hasMore, options.json || false);
       return this._buildReport('convert', plan.items.length, 0, 0, 0, []);
     }
 
@@ -473,7 +538,7 @@ export class CLIHandler {
         },
         progress
       );
-      const summary = await converter.convertAll();
+      const summary = await converter.convertFiles(groups.md);
       success += summary.success;
       failed += summary.failed;
       failedDetails.push(...summary.failedFiles);
@@ -483,7 +548,7 @@ export class CLIHandler {
       const htmlConverter = new HtmlConverterService(progress, {
         format: config.options?.format as 'A4' | 'A3' | 'A5' | 'Letter' || 'A4',
       });
-      const summary = await htmlConverter.convertAll(config.input.path, config.output.path);
+      const summary = await htmlConverter.convertFiles(groups.html, config.input.path, config.output.path);
       success += summary.success;
       failed += summary.failed;
       failedDetails.push(...summary.failedFiles);
@@ -646,7 +711,29 @@ export class CLIHandler {
     };
   }
 
-  private static _printDryRunPlan(plan: ConvertExecutionPlan): void {
+  private static _printDryRunPlan(
+    plan: ConvertExecutionPlan,
+    hasMore: boolean = false,
+    isJsonMode: boolean = false
+  ): void {
+    if (isJsonMode) {
+      const output = {
+        dry_run: true,
+        input: plan.inputRoot,
+        output: plan.outputRoot,
+        total_files: plan.items.length,
+        has_more: hasMore,
+        items: plan.items.map((item) => ({
+          action: item.action,
+          input: item.inputPath,
+          output: item.targetPath,
+          reason: item.reason,
+        })),
+      };
+      console.log(JSON.stringify(output));
+      return;
+    }
+
     console.log(chalk.cyan('\n🧪 Dry-run 执行计划（无副作用）'));
     console.log(chalk.gray('='.repeat(60)));
     console.log(`输入: ${plan.inputRoot}`);
@@ -660,13 +747,29 @@ export class CLIHandler {
       }
     }
 
+    if (hasMore) {
+      console.log(chalk.yellow('... 已按 --limit 截断，仍有更多文件未展示'));
+    }
+
     console.log(chalk.gray('='.repeat(60)));
     console.log(chalk.green('Dry-run 完成：未创建任何文件，未执行实际转换。'));
   }
 
-  private static _printEffectiveConfig(config: Mark2pdfConfig, sources: Record<string, ConfigSource>): void {
+  private static _printEffectiveConfig(
+    config: Mark2pdfConfig,
+    sources: Record<string, ConfigSource>,
+    jsonOutput: JsonOutput
+  ): void {
     const lines: string[] = [];
     this._flattenConfig(config, '', lines, sources);
+
+    if (jsonOutput.isJsonMode()) {
+      console.log(JSON.stringify({
+        config,
+        sources,
+      }));
+      return;
+    }
 
     console.log(chalk.cyan('\n🧭 生效配置（含来源）'));
     console.log(chalk.gray('='.repeat(60)));
@@ -756,13 +859,17 @@ export class CLIHandler {
       return this._buildReport('extract', 0, 0, 0, 0, []);
     }
 
-    progress.info(`找到 ${files.length} 个文件待处理`);
+    const limit = options.limit ?? 50;
+    const hasMore = limit > 0 && files.length > limit;
+    const limitedFiles = hasMore ? files.slice(0, limit) : files;
+
+    progress.info(`找到 ${limitedFiles.length} 个文件待处理`);
 
     if (options.dryRun) {
       const plan: ConvertExecutionPlan = {
         inputRoot: inputPath,
         outputRoot: outputPath,
-        items: files.map((file) => {
+        items: limitedFiles.map((file) => {
           const type = detectInputType(file);
           const ext = format;
           return {
@@ -774,15 +881,15 @@ export class CLIHandler {
           };
         }),
       };
-      this._printDryRunPlan(plan);
-      return this._buildReport('extract', files.length, 0, 0, 0, []);
+      this._printDryRunPlan(plan, hasMore, options.json || false);
+      return this._buildReport('extract', limitedFiles.length, 0, 0, 0, []);
     }
 
     await fs.mkdir(outputPath, { recursive: true });
 
     const results: Array<{ success: boolean; file: string; error?: string }> = [];
 
-    for (const file of files) {
+    for (const file of limitedFiles) {
       const fileType = detectInputType(file);
 
       if (fileType === 'pdf') {
@@ -817,7 +924,7 @@ export class CLIHandler {
 
     return this._buildReport(
       'extract',
-      files.length,
+      limitedFiles.length,
       successCount,
       failCount,
       Date.now() - startedAt,
@@ -825,16 +932,23 @@ export class CLIHandler {
     );
   }
 
-  private static async _handleInit(options: UnifiedCLIOptions) {
+  private static async _handleInit(options: UnifiedCLIOptions, jsonOutput: JsonOutput) {
     void options;
 
-    await this._runSetupWizard();
+    await this._runSetupWizard(jsonOutput);
   }
 
-  private static async _writeStructuredReport(reportPath: string, report: StructuredExecutionReport): Promise<void> {
+  private static async _writeStructuredReport(
+    reportPath: string,
+    report: StructuredExecutionReport,
+    jsonOutput: JsonOutput
+  ): Promise<void> {
     await fs.mkdir(path.dirname(reportPath), { recursive: true });
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf-8');
-    console.log(chalk.green(`✅ 结构化报告已输出: ${reportPath}`));
+
+    if (!jsonOutput.shouldSuppressOutput()) {
+      console.log(chalk.green(`✅ 结构化报告已输出: ${reportPath}`));
+    }
   }
 
   private static _buildReport(
@@ -917,15 +1031,31 @@ export class CLIHandler {
     await fs.writeFile(reportPath, JSON.stringify(report, null, 2), 'utf-8');
   }
 
-  private static _printSuccessSummary(command: SupportedCommand, outputPath: string): void {
-    console.log(chalk.green(`✅ ${command} 完成，输出目录：${outputPath}`));
+  private static _printSuccessSummary(
+    command: SupportedCommand,
+    outputPath: string,
+    jsonOutput: JsonOutput
+  ): void {
+    if (jsonOutput.isJsonMode()) {
+      console.log(JSON.stringify({ command, output: outputPath, status: 'success' }));
+      return;
+    }
+
+    if (!jsonOutput.shouldSuppressOutput()) {
+      console.log(chalk.green(`✅ ${command} 完成，输出目录：${outputPath}`));
+    }
   }
 
   private static _printFailureSummary(
     command: SupportedCommand,
     stage: ExecutionStage,
-    latestReportPath: string
+    latestReportPath: string,
+    jsonOutput: JsonOutput
   ): void {
+    if (jsonOutput.isJsonMode()) {
+      return;
+    }
+
     console.error(chalk.red(`❌ ${command} 失败（阶段：${stage}），详情：${latestReportPath}`));
   }
 
@@ -937,7 +1067,7 @@ export class CLIHandler {
       return {
         category: 'argument',
         summary: message,
-        action: '请检查命令参数，使用 --help 查看示例。',
+        action: 'mark2pdf --help',
       };
     }
 
@@ -945,7 +1075,7 @@ export class CLIHandler {
       return {
         category: 'path',
         summary: message,
-        action: '请确认输入/输出路径存在且可访问。',
+        action: 'mark2pdf convert --show-config',
       };
     }
 
@@ -953,22 +1083,35 @@ export class CLIHandler {
       return {
         category: 'permission',
         summary: message,
-        action: '请检查目录权限，必要时调整写入目录或权限设置。',
+        action: 'mark2pdf convert -o ./output',
       };
     }
 
     return {
       category: 'runtime',
       summary: message,
-      action: '请使用 --verbose 复现并检查详细日志。',
+      action: 'mark2pdf --verbose convert --dry-run',
     };
   }
 
-  private static _printActionableError(error: ActionableError): void {
-    console.error(chalk.red('\n[CLI_ERROR]'));
-    console.error(`类别: ${error.category}`);
-    console.error(`摘要: ${error.summary}`);
-    console.error(`建议: ${error.action}`);
+  private static _printActionableError(error: ActionableError, jsonOutput: JsonOutput): void {
+    const formatted = jsonOutput.formatError({
+      category: error.category,
+      summary: error.summary,
+      action: error.action,
+    });
+
+    if (jsonOutput.isJsonMode() && typeof formatted === 'object') {
+      console.error(JSON.stringify(formatted));
+      return;
+    }
+
+    const fallback = ErrorFormatter.toStructuredError(
+      new Error(`${error.category}: ${error.summary}`),
+      false
+    );
+
+    console.error(typeof formatted === 'string' ? formatted : fallback);
   }
 
   private static async _fileExists(filePath: string): Promise<boolean> {
