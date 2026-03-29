@@ -72,47 +72,26 @@ mark2pdf convert [options]
 - `--report-json <path>` 输出结构化 JSON 报告
 - `--verbose` 详细日志
 
-### html
+## 全局标志
 
-```bash
-mark2pdf html [options]
-```
+- `--json`: 结构化 JSON 输出（Agent 模式）
+- `--no-color`: 禁用颜色输出
+- `-q, --quiet`: 静默模式（仅输出错误）
+- `-v, --verbose`: 详细日志
+- `--no-input`: 禁用交互式提示
+- `--limit <n>`: 最大处理文件数（默认 50，0 表示无限制）
 
-- `-i, --input <path>` 默认：`./public/html`
-- `-o, --output <path>` 未传时：`./output/html`
-- `-c, --config <path>` 配置文件路径
-- `--format <type>` 页面格式，默认 `A4`
-- `--verbose` 详细日志
+## 配置优先级
 
-### merge
+配置按以下优先级从高到低加载：
 
-```bash
-mark2pdf merge [options]
-```
+1. **命令行参数**（例如：`--input ./docs`）
+2. **环境变量**（`MARK2PDF_INPUT_PATH`、`MARK2PDF_OUTPUT_PATH`）
+3. **项目配置文件**（`./mark2pdf.config.json`、`./config.json`）
+4. **用户配置文件**（`~/.mark2pdf/config.json`）
+5. **默认值**
 
-- `-i, --input <path>` 默认：`./dist/pdf`
-- `-o, --output <path>` 未传时：`./output/merge`
-- `-c, --config <path>` 配置文件路径
-- `--verbose` 详细日志
-
-### extract
-
-```bash
-mark2pdf extract [options]
-```
-
-- `-i, --input <path>` 默认：`./input`
-- `-o, --output <path>` 未传时：`./output/extract`
-- `-f, --format <format>` `txt|md|json`
-- `--verbose` 详细日志
-
-### init
-
-```bash
-mark2pdf init [options]
-```
-
-- `-g, --global` 创建全局配置
+详见 [docs/cli-spec.md](./docs/cli-spec.md)。
 
 ## 输出与报告（KISS）
 
