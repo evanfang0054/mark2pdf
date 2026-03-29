@@ -38,39 +38,44 @@ export class ConverterService {
   async convertAll(): Promise<ConversionSummary> {
     try {
       this.startTime = Date.now();
-      
+
       // 文件扫描阶段
       this.progress.info('正在扫描 Markdown 文件...');
       const mdFiles = await this._getMdFiles();
-      
-      if (mdFiles.length === 0) {
-        this.progress.warn('未找到任何 Markdown 文件');
-        return {
-          total: 0,
-          success: 0,
-          failed: 0,
-          duration: 0,
-          successRate: 0,
-          failedFiles: []
-        };
-      }
-      
-      this.progress.info(`找到 ${chalk.cyan(mdFiles.length.toString())} 个 Markdown 文件`);
-
-      // 转换阶段
-      const results = await this._processBatch(mdFiles);
-      const summary = this._createSummary(results);
-      this._printSummary(summary);
-      
-      // 清理阶段
-      await this._cleanup();
-      
-      return summary;
+      return this.convertFiles(mdFiles, false);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.progress.error(`转换过程出错: ${errorMessage}`);
       throw error;
     }
+  }
+
+  async convertFiles(files: string[], logScanResult: boolean = true): Promise<ConversionSummary> {
+    if (files.length === 0) {
+      this.progress.warn('未找到任何 Markdown 文件');
+      return {
+        total: 0,
+        success: 0,
+        failed: 0,
+        duration: 0,
+        successRate: 0,
+        failedFiles: []
+      };
+    }
+
+    if (logScanResult) {
+      this.progress.info(`找到 ${chalk.cyan(files.length.toString())} 个 Markdown 文件`);
+    }
+
+    // 转换阶段
+    const results = await this._processBatch(files);
+    const summary = this._createSummary(results);
+    this._printSummary(summary);
+
+    // 清理阶段
+    await this._cleanup();
+
+    return summary;
   }
 
   /**

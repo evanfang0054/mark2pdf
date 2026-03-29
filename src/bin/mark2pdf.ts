@@ -1,12 +1,59 @@
 #!/usr/bin/env node
 
+import fs from 'fs';
+import path from 'path';
 import { Command } from 'commander';
 import { CLIHandler } from '../cli/handler';
 import { version } from '../../package.json';
 
 type CommandHandler = (command: string, options: Record<string, unknown>) => Promise<void>;
 
+type SupportedCompletionShell = 'bash' | 'zsh';
+
+type CommandWithGlobalOptions = {
+  optsWithGlobals?: () => Record<string, unknown>;
+};
+
 const defaultCommandHandler: CommandHandler = (command, options) => CLIHandler.handleCommand(command, options);
+
+function mergeActionOptions(
+  options: Record<string, unknown>,
+  command: CommandWithGlobalOptions
+): Record<string, unknown> {
+  const globalOptions = typeof command.optsWithGlobals === 'function'
+    ? command.optsWithGlobals()
+    : {};
+
+  return {
+    ...globalOptions,
+    ...options,
+  };
+}
+
+function resolveCompletionScriptPath(shell: SupportedCompletionShell): string {
+  const fileName = shell === 'zsh' ? '_mark2pdf' : 'mark2pdf.bash';
+  return path.resolve(__dirname, '..', '..', 'completions', shell, fileName);
+}
+
+function printCompletionScript(shellArg?: string): never {
+  const shell = (shellArg || 'bash') as SupportedCompletionShell;
+
+  if (shell !== 'bash' && shell !== 'zsh') {
+    console.error(`Unsupported shell: ${shellArg || shell}`);
+    console.error('Supported shells: bash, zsh');
+    process.exit(1);
+  }
+
+  const scriptPath = resolveCompletionScriptPath(shell);
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error(`Completion script not found: ${scriptPath}`);
+    process.exit(1);
+  }
+
+  process.stdout.write(fs.readFileSync(scriptPath, 'utf-8'));
+  process.exit(0);
+}
 
 export function createProgram(commandHandler: CommandHandler = defaultCommandHandler): Command {
   const program = new Command();
@@ -14,8 +61,14 @@ export function createProgram(commandHandler: CommandHandler = defaultCommandHan
   // 命令行接口设计 (TypeScript + Commander v12+)
   program
     .name('mark2pdf')
-    .description('专业的 Markdown 转 PDF 工具')
-    .version(version);
+    .description('统一文档处理 CLI，支持转换、提取与合并')
+    .version(version)
+    .option('--json', '结构化 JSON 输出（Agent 模式）')
+    .option('--no-color', '禁用颜色输出')
+    .option('-q, --quiet', '静默模式（仅输出错误）')
+    .option('--no-input', '禁用交互式提示')
+    .option('-v, --verbose', '详细输出')
+    .option('--limit <number>', '最大处理文件数（默认 50，0 表示无限制）', (val) => parseInt(val, 10), 50);
 
   // 主命令（默认为 convert）
   program
@@ -33,9 +86,15 @@ export function createProgram(commandHandler: CommandHandler = defaultCommandHan
     .option('--show-config', '打印最终生效配置及来源')
     .option('--report-json <path>', '输出结构化执行报告 JSON 文件')
     .option('--format <type>', '【已弃用】请使用 --page-size')
-    .option('--verbose', '详细输出')
-    .action(async (options) => {
-      await commandHandler('convert', options);
+    .addHelpText('after', `
+示例:
+  $ mark2pdf convert -i ./docs -o ./output
+  $ mark2pdf convert --dry-run --show-config
+  $ mark2pdf --json --limit 10 convert --dry-run
+  $ mark2pdf --no-input --quiet convert
+`)
+    .action(async (options, command) => {
+      await commandHandler('convert', mergeActionOptions(options, command));
     });
 
   program
@@ -45,9 +104,8 @@ export function createProgram(commandHandler: CommandHandler = defaultCommandHan
     .option('-o, --output <path>', '输出目录')
     .option('-c, --config <path>', '配置文件路径')
     .option('--format <type>', '页面格式', 'A4')
-    .option('--verbose', '详细输出')
-    .action(async (options) => {
-      await commandHandler('html', options);
+    .action(async (options, command) => {
+      await commandHandler('html', mergeActionOptions(options, command));
     });
 
   program
@@ -56,9 +114,8 @@ export function createProgram(commandHandler: CommandHandler = defaultCommandHan
     .option('-i, --input <path>', '输入目录', './dist/pdf')
     .option('-o, --output <path>', '输出目录')
     .option('-c, --config <path>', '配置文件路径')
-    .option('--verbose', '详细输出')
-    .action(async (options) => {
-      await commandHandler('merge', options);
+    .action(async (options, command) => {
+      await commandHandler('merge', mergeActionOptions(options, command));
     });
 
   program
@@ -66,18 +123,35 @@ export function createProgram(commandHandler: CommandHandler = defaultCommandHan
     .description('从 PDF/Word 文档提取文本')
     .option('-i, --input <path>', '输入文件或目录', './input')
     .option('-o, --output <path>', '输出目录')
-    .option('-f, --format <format>', '输出格式 (txt|md|json)', 'txt')
-    .option('--verbose', '详细输出')
-    .action(async (options) => {
-      await commandHandler('extract', options);
+    .option('--out-format <format>', '输出格式 (txt|md|json)', 'txt')
+    .option('-f, --format <format>', '【已弃用】请使用 --out-format')
+    .addHelpText('after', `
+示例:
+  $ mark2pdf extract -i ./docs/report.pdf -o ./output --out-format txt
+  $ mark2pdf --json extract -i ./docs -o ./output --out-format json
+`)
+    .action(async (options, command) => {
+      await commandHandler('extract', mergeActionOptions(options, command));
     });
 
   program
     .command('init')
     .description('初始化配置文件')
     .option('-g, --global', '创建全局配置')
-    .action(async (options) => {
-      await commandHandler('init', options);
+    .action(async (options, command) => {
+      await commandHandler('init', mergeActionOptions(options, command));
+    });
+
+  program
+    .command('completion [shell]')
+    .description('输出 shell 补全脚本')
+    .addHelpText('after', `
+示例:
+  $ mark2pdf completion bash
+  $ mark2pdf completion zsh
+`)
+    .action((shell) => {
+      printCompletionScript(shell);
     });
 
   return program;
